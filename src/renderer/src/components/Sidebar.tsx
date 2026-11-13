@@ -16,8 +16,8 @@ import type { ReactNode } from 'react';
 /** 分类主菜单（对应 demo App 端目录协议的 3 个主分类，直达 /category/{main}） */
 const CATEGORIES: { to: string; icon: ReactNode; label: string }[] = [
   { to: '/category/real-drama', icon: <IconTv />, label: '真人剧' },
-  { to: '/category/comic-drama', icon: <IconPalette />, label: '漫剧' },
-  { to: '/category/ai-drama', icon: <IconSparkles />, label: 'AI剧' },
+  { to: '/category/comic-drama', icon: <IconPalette />, label: 'AI漫剧' },
+  { to: '/category/ai-drama', icon: <IconSparkles />, label: 'AI短剧' },
 ];
 
 /**
@@ -63,8 +63,8 @@ export function Sidebar() {
   return (
     <aside className="sidebar">
       <div className="brand">
-        {/* 相对路径引用 public/logo.svg：打包后 file:// 协议下绝对路径 /logo.svg 会解析到盘符根目录导致 404 */}
-        <img className="brand-logo" src="logo.svg" alt="黑果短剧" />
+        {/* logo 用标准 png（原 logo.svg 为内嵌位图的伪 svg 450KB）；相对路径引用 public/，规避打包后 file:// 绝对路径 404 */}
+        <img className="brand-logo" src="logo.png" alt="黑果短剧" />
         <div>
           <div className="brand-name">黑果短剧</div>
           <div className="brand-sub">专注短剧的追剧神器</div>
@@ -75,7 +75,7 @@ export function Sidebar() {
       {item('/', <IconHome />, '首页')}
       {CATEGORIES.map((c) => item(c.to, c.icon, c.label, undefined, c.to))}
       {item('/actors', <IconStar />, '剧星榜')}
-      {item('/rank', <IconChart />, '榜单')}
+      {item('/rank', <IconChart />, '剧榜单')}
 
       <div className="sidebar-bottom">
         <div className="nav-group">我的</div>

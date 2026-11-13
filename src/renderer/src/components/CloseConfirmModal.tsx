@@ -71,7 +71,7 @@ export function CloseConfirmModal({ open, onClose }: CloseConfirmModalProps) {
         onMouseDown={(e) => e.stopPropagation()}
       >
         <div className="cc-badge">
-          <IconClose size={18} />
+          <img src="logo.png" alt="" className="cc-badge-logo" />
         </div>
         <h3 className="cc-title">关闭 黑果短剧</h3>
         <p className="cc-desc">退出应用，或最小化到系统托盘随时回来</p>
@@ -80,15 +80,19 @@ export function CloseConfirmModal({ open, onClose }: CloseConfirmModalProps) {
             <span className="cc-option-icon tray">
               <IconMinimize size={15} />
             </span>
-            <span className="cc-option-title">最小化到托盘</span>
-            <span className="cc-option-sub">单击托盘图标恢复</span>
+            <span className="cc-option-text">
+              <span className="cc-option-title">最小化到托盘</span>
+              <span className="cc-option-sub">单击托盘图标恢复</span>
+            </span>
           </button>
           <button className="cc-option" onClick={() => choose('quit')}>
             <span className="cc-option-icon quit">
               <IconClose size={14} />
             </span>
-            <span className="cc-option-title">退出应用</span>
-            <span className="cc-option-sub">完全关闭，后台不保留</span>
+            <span className="cc-option-text">
+              <span className="cc-option-title">退出应用</span>
+              <span className="cc-option-sub">完全关闭，后台不保留</span>
+            </span>
           </button>
         </div>
         <label className="cc-remember">

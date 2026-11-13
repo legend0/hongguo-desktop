@@ -74,6 +74,29 @@ export const IconGear = (p: IconProps) => (
   </Base>
 );
 
+/** 月亮（主题：暗色） */
+export const IconMoon = (p: IconProps) => (
+  <Base {...p}>
+    <path d="M20.5 13.2A8.5 8.5 0 1 1 10.8 3.5a7 7 0 0 0 9.7 9.7Z" />
+  </Base>
+);
+
+/** 太阳（主题：亮色） */
+export const IconSun = (p: IconProps) => (
+  <Base {...p}>
+    <circle cx="12" cy="12" r="4" />
+    <path d="M12 2.5v2.4M12 19.1v2.4M2.5 12h2.4M19.1 12h2.4M5.2 5.2l1.7 1.7M17.1 17.1l1.7 1.7M18.8 5.2l-1.7 1.7M6.9 17.1l-1.7 1.7" />
+  </Base>
+);
+
+/** 显示器（主题：跟随系统） */
+export const IconMonitor = (p: IconProps) => (
+  <Base {...p}>
+    <rect x="3" y="4.5" width="18" height="12" rx="1.8" />
+    <path d="M9.5 20.5h5M12 16.5v4" />
+  </Base>
+);
+
 export const IconPlay = (p: IconProps) => (
   <Base {...p} fill="currentColor" stroke="none">
     <path d="M8 5.5v13l11-6.5-11-6.5Z" />

@@ -1,4 +1,4 @@
-/* ============================================================
+﻿/* ============================================================
    黑果短剧 PC 端 · 全局样式
    依据 docs/PC端视觉规范.md：
    令牌 --dur-fast 150ms / --dur-base 280ms / --dur-slow 600ms
@@ -39,6 +39,34 @@
   --dur-base: 0.28s;
   --dur-slow: 0.6s;
   --ease: cubic-bezier(0.22, 0.61, 0.36, 1);
+
+  /* 滚动条滑块（明暗主题各自覆盖） */
+  --scrollbar-thumb: #333;
+  --scrollbar-thumb-2: #3a3a46;
+  --bg-elevated: #23232e;
+  /* 首页 Hero 深色渐变底（亮色主题覆盖） */
+  --hero-grad: linear-gradient(135deg, #2a1f2e 0%, #1a1a24 100%);
+}
+
+/* ===== 亮色主题：覆盖颜色令牌（结构与暗色共用，仅换色板） ===== */
+html[data-theme='light'] {
+  --bg-window: #f4f5f7;
+  --bg-panel: #ffffff;
+  --bg-field: #e9ebef;
+  --bg-elevated: #f7f8fa;
+  --bg-hover: rgba(0, 0, 0, 0.05);
+  --text-primary: #16181d;
+  --text-body: #2a2d34;
+  --text-secondary: #6b7280;
+  --text-tertiary: #8a919c;
+  --text-disable: #c0c4cc;
+  --divider: rgba(0, 0, 0, 0.08);
+  --overlay: rgba(20, 24, 32, 0.4);
+  --focus-ring: rgba(255, 77, 109, 0.16);
+  --shadow-card-hover: 0 14px 30px rgba(0, 0, 0, 0.14), 0 0 0 1px rgba(255, 77, 109, 0.35);
+  --scrollbar-thumb: #c9ccd4;
+  --scrollbar-thumb-2: #b7bcc6;
+  --hero-grad: linear-gradient(135deg, #fdeef1 0%, #f6ecf7 100%);
 }
 
 * { margin: 0; padding: 0; box-sizing: border-box; }
@@ -56,7 +84,7 @@ body {
 }
 
 ::-webkit-scrollbar { width: 6px; height: 6px; }
-::-webkit-scrollbar-thumb { background: #333; border-radius: 3px; }
+::-webkit-scrollbar-thumb { background: var(--scrollbar-thumb); border-radius: 3px; }
 
 /* ===== 动画 ===== */
 @keyframes fadeUp {
@@ -271,10 +299,10 @@ body {
   overflow-x: hidden;
   padding: 10px var(--page-x) 24px;
   scrollbar-width: thin;
-  scrollbar-color: #3a3a46 transparent;
+  scrollbar-color: var(--scrollbar-thumb-2) transparent;
 }
 .list-body::-webkit-scrollbar { width: 6px; }
-.list-body::-webkit-scrollbar-thumb { background: #3a3a46; border-radius: 3px; }
+.list-body::-webkit-scrollbar-thumb { background: var(--scrollbar-thumb-2); border-radius: 3px; }
 .list-body::-webkit-scrollbar-track { background: transparent; }
 .list-end {
   text-align: center;
@@ -1170,9 +1198,10 @@ body {
 /* ===== Hero ===== */
 .hero {
   border-radius: var(--radius-hero);
+  /* radial 品牌高光叠加渐变底；--hero-grad 亮色主题覆盖为浅色渐变 */
   background:
     radial-gradient(ellipse at 75% 30%, rgba(255, 77, 109, 0.25), transparent 60%),
-    linear-gradient(135deg, #2a1f2e 0%, #1a1a24 100%);
+    var(--hero-grad, linear-gradient(135deg, #2a1f2e 0%, #1a1a24 100%));
   background-size: 180% 180%;
   animation: gradientShift 10s ease infinite, fadeUp var(--dur-slow) var(--ease) 0.15s both;
   padding: 36px 40px;
@@ -2178,7 +2207,8 @@ body {
   animation: fadeIn var(--dur-fast) var(--ease) both;
 }
 .cc-modal {
-  width: 360px;
+  width: 420px;
+  max-width: calc(100vw - 48px);
   padding: 22px 22px 18px;
   border: 1px solid rgba(255, 255, 255, 0.12);
   border-radius: 14px;
@@ -2199,7 +2229,7 @@ body {
   color: var(--text-secondary);
   text-align: center;
 }
-/* 顶部圆形品牌徽标 */
+/* 顶部圆形品牌徽标（logo.png） */
 .cc-badge {
   width: 44px;
   height: 44px;
@@ -2212,22 +2242,23 @@ body {
   color: #fff;
   box-shadow: 0 6px 18px rgba(255, 77, 109, 0.35);
 }
+.cc-badge-logo { width: 26px; height: 26px; border-radius: 50%; display: block; }
 .cc-options {
   margin-top: 18px;
   display: grid;
   grid-template-columns: 1fr 1fr;
   gap: 10px;
 }
+/* 横排卡片：图标居左，标题/副标题右侧堆叠，层次更清晰 */
 .cc-option {
   display: flex;
-  flex-direction: column;
   align-items: center;
-  gap: 4px;
-  padding: 16px 10px 14px;
+  gap: 10px;
+  padding: 12px 14px;
   border: 1px solid rgba(255, 255, 255, 0.1);
   border-radius: var(--radius-control);
   background: var(--bg-field);
-  text-align: center;
+  text-align: left;
   color: inherit;
   transition: border-color var(--dur-fast) var(--ease), background var(--dur-fast) var(--ease),
     transform var(--dur-fast) var(--ease);
@@ -2244,7 +2275,7 @@ body {
 .cc-option-icon {
   width: 34px;
   height: 34px;
-  margin-bottom: 4px;
+  flex-shrink: 0;
   display: flex;
   align-items: center;
   justify-content: center;
@@ -2264,14 +2295,26 @@ body {
   background: var(--brand-gradient);
   color: #fff;
 }
+.cc-option-text {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+}
 .cc-option-title {
   font-size: 13px;
   font-weight: 600;
   color: var(--text-primary);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 .cc-option-sub {
   font-size: 11px;
   color: var(--text-secondary);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 .cc-remember {
   margin-top: 14px;

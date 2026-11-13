@@ -2,6 +2,8 @@ import { FormEvent, useCallback, useEffect, useRef, useState } from 'react';
 import type { KeyboardEvent as ReactKeyboardEvent } from 'react';
 import { useLocation, useNavigate } from 'react-router-dom';
 import { api } from '../api';
+import { settingsStore, useSettings, type ThemeMode } from '../stores';
+import { nextThemeMode } from '../hooks/useTheme';
 import { useSearchHistory } from '../stores';
 import { requestClose } from './CloseConfirmModal';
 import type { SearchSuggestion } from '../types';
@@ -11,6 +13,9 @@ import {
   IconChevronRight,
   IconChevronLeft,
   IconGear,
+  IconMoon,
+  IconSun,
+  IconMonitor,
   IconMinimize,
   IconMaximize,
   IconRestore,
@@ -20,6 +25,8 @@ import {
 const DEBOUNCE_MS = 250;
 const MAX_SUGGESTIONS = 8;
 
+const THEME_LABEL: Record<ThemeMode, string> = { dark: '暗色', light: '亮色', system: '跟随系统' };
+
 /**
  * 右侧顶部控制栏：
  * [返回] [搜索框（Ctrl+K 聚焦 / 聚焦展开 / 键盘上下选择）] …… [设置] | [窗口控制]
@@ -27,6 +34,7 @@ const MAX_SUGGESTIONS = 8;
  * 控件尺寸统一：图标按钮 32×32 / 8px 圆角，输入框 34px 高 / --radius-control 圆角。
  */
 export function Topbar() {
+  const { theme } = useSettings();
   const [kw, setKw] = useState('');
   const [open, setOpen] = useState(false);
   const [sugs, setSugs] = useState<SearchSuggestion[]>([]);
@@ -305,6 +313,14 @@ export function Topbar() {
       </div>
 
       <div className="topbar-actions">
+        <button
+          className="tb-icon"
+          title={`主题：${THEME_LABEL[theme]}（点击切换）`}
+          aria-label={`切换主题，当前 ${THEME_LABEL[theme]}`}
+          onClick={() => settingsStore.setState({ theme: nextThemeMode(theme) })}
+        >
+          {theme === 'dark' ? <IconMoon size={16} /> : theme === 'light' ? <IconSun size={16} /> : <IconMonitor size={16} />}
+        </button>
         <button className="tb-icon" title="设置" aria-label="设置" onClick={() => navigate('/settings')}>
           <IconGear size={16} />
         </button>

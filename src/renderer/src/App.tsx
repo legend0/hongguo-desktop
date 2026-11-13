@@ -5,6 +5,7 @@ import { Topbar } from './components/Topbar';
 import { ToastHost } from './components/Toast';
 import { CloseConfirmModal } from './components/CloseConfirmModal';
 import { api } from './api';
+import { useTheme } from './hooks/useTheme';
 import { HomePage } from './pages/HomePage';
 import { CategoryPage } from './pages/CategoryPage';
 import { RankPage } from './pages/RankPage';
@@ -32,6 +33,8 @@ export function App() {
 
 function RootLayout() {
   const { pathname } = useLocation();
+  // 主题应用（主窗口 + 播放器独立窗口共用）：settings.theme → <html data-theme>
+  useTheme();
   // 关闭确认弹窗：Alt+F4（主进程转发）与顶栏关闭按钮（无记住偏好时）共用
   const [closeOpen, setCloseOpen] = useState(false);
   /** 关闭弹窗（选择/取消均走这里）：同步通知主进程"已响应"，清除 3s 关闭兜底定时器 */

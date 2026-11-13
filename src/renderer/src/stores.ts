@@ -26,10 +26,14 @@ export interface HistoryEntry {
   updatedAt: number;
 }
 
+/** 主题模式：dark 暗色 / light 亮色 / system 跟随系统 */
+export type ThemeMode = 'dark' | 'light' | 'system';
+
 export interface Settings {
   autoNext: boolean;
   defaultSpeed: number;
   rememberProgress: boolean;
+  theme: ThemeMode;
 }
 
 // ===== stores（与原 @hongguo/core 行为一致） =====
@@ -81,6 +85,7 @@ export const settingsStore = createStore<
   autoNext: true,
   defaultSpeed: 1.0,
   rememberProgress: true,
+  theme: 'dark',
   update: (patch) => set(patch),
 }));
 
@@ -141,8 +146,8 @@ function wirePersistence(): void {
     void api.storage.set(KEY.history, s.entries);
   });
   settingsStore.subscribe((s) => {
-    const { autoNext, defaultSpeed, rememberProgress } = s;
-    void api.storage.set(KEY.settings, { autoNext, defaultSpeed, rememberProgress });
+    const { autoNext, defaultSpeed, rememberProgress, theme } = s;
+    void api.storage.set(KEY.settings, { autoNext, defaultSpeed, rememberProgress, theme });
   });
   searchHistoryStore.subscribe((s) => {
     void api.storage.set(KEY.searchHistory, s.items);
