@@ -3255,6 +3255,8 @@ input[type='range'].hg-range:active::-webkit-slider-thumb {
 .actor-card:hover .actor-more { opacity: 1; }
 
 /* 演员主页 */
+/* 合作演员横向滑动条：复用 .dt-cast-* 详情页演员条样式，抵消其自带的上间距 */
+.actor-cast-band { margin-top: 0; }
 .actor-hero {
   display: flex;
   align-items: center;
