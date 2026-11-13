@@ -33,6 +33,8 @@ export function Topbar() {
   const [loading, setLoading] = useState(false);
   const [active, setActive] = useState(-1);
   const [maximized, setMaximized] = useState(false);
+  /** 搜索输入框是否处于聚焦态（聚焦期间点击外部仅退出聚焦，不触发目标动作） */
+  const [searchFocused, setSearchFocused] = useState(false);
   const navigate = useNavigate();
   const location = useLocation();
   const searchHistory = useSearchHistory();
@@ -103,6 +105,26 @@ export function Topbar() {
     document.addEventListener('mousedown', onDoc);
     return () => document.removeEventListener('mousedown', onDoc);
   }, []);
+
+  // 搜索聚焦期间，点击框外任意位置的动作一律只"退出聚焦"：
+  // 在 document capture 阶段吞掉 mousedown/click（stopPropagation 使 React 委托与元素监听
+  // 均收不到事件，导航/按钮/卡片不会被误触发），随后手动失焦。
+  useEffect(() => {
+    if (!searchFocused) return;
+    const swallowOutside = (e: MouseEvent) => {
+      if (boxRef.current?.contains(e.target as Node)) return;
+      e.preventDefault();
+      e.stopPropagation();
+      setOpen(false);
+      inputRef.current?.blur();
+    };
+    document.addEventListener('mousedown', swallowOutside, true);
+    document.addEventListener('click', swallowOutside, true);
+    return () => {
+      document.removeEventListener('mousedown', swallowOutside, true);
+      document.removeEventListener('click', swallowOutside, true);
+    };
+  }, [searchFocused]);
 
   const goSearch = useCallback(
     (q: string) => {
@@ -181,7 +203,11 @@ export function Topbar() {
               setKw(e.target.value);
               setOpen(true);
             }}
-            onFocus={() => setOpen(true)}
+            onFocus={() => {
+              setOpen(true);
+              setSearchFocused(true);
+            }}
+            onBlur={() => setSearchFocused(false)}
             onKeyDown={onInputKeyDown}
             placeholder="搜索短剧、演员、标签"
             aria-label="搜索短剧"

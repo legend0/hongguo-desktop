@@ -5,8 +5,8 @@
    --ease cubic-bezier(.22,.61,.36,1)
    ============================================================ */
 
-/* ===== 全局字体：MiSans Heavy（小米开源字体，允许免费商用/分发；unicode-range 分片按需加载） ===== */
-@import '../assets/fonts/misans/MiSans-Heavy.min.css';
+/* ===== 全局字体：MiSans Normal（小米开源字体，允许免费商用/分发；unicode-range 分片按需加载） ===== */
+@import '../assets/fonts/misans/MiSans-Normal.min.css';
 
 :root {
   /* 页面水平内边距（下放至内部元素；窄窗口断点收窄） */
@@ -46,8 +46,8 @@
 html, body, #root { height: 100%; }
 
 body {
-  /* MiSans 切片仅声明 Heavy（font-weight:900）一个字重，任何 weight 请求都匹配到它，
-     视觉效果与原 PingFang Heavy 单字重全局粗体一致 */
+  /* MiSans 切片仅声明 Normal（font-weight:350）一个字重，任何 weight 请求都匹配到它；
+     原本因使用苹方 Heavy 呈现的全局粗体随之恢复常规字重 */
   font-family: 'MiSans', -apple-system, 'PingFang SC', 'Microsoft YaHei', sans-serif;
   background: var(--bg-window);
   color: var(--text-body);

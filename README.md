@@ -29,7 +29,10 @@
 
 ## 使用方法
 
-环境要求：Windows 10+，Node.js 18+（开发）。
+环境要求：Node.js 18+（开发）。
+
+- **Windows 10 / 11**：官方提供安装包（NSIS + 便携版，x64），已验证。
+- **macOS / Linux**：代码基于 Electron 跨平台实现（含 ffmpeg 调用的平台适配），从源码运行理论可用，但官方不提供安装包，也未经测试验证，欢迎自行构建反馈。
 
 ```bash
 # 安装依赖（Windows 下如 electron 二进制未自动下载，执行 node node_modules/electron/install.js）
