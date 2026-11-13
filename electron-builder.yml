@@ -1,0 +1,48 @@
+# electron-builder 打包配置（Windows：NSIS 安装包 + portable 便携版）
+# 运行：npm run dist（= electron-vite build + electron-builder --win）
+appId: com.hongguo.desktop
+productName: 黑果短剧
+
+directories:
+  # 注：release\win-unpacked\resources\app.asar 被 IDE（WorkBuddy）锁定；
+  # release2 同样被 WorkBuddy 锁定（Restart Manager 实锤 PID）；
+  # release3 在打包期间有运行中的应用实例占用。暂用 release4；
+  # 全部锁释放后可清理旧 release* 目录并改回
+  output: release
+  buildResources: build
+
+# 依赖已全部打进 out/（vite 内联 data-server/axios/cheerio，渲染层自打包），
+# 产物只带 out 与 package.json，不收集 node_modules
+files:
+  - out/**
+  - package.json
+  - "!**/*.map"
+
+# 托盘图标：打包后位于 <安装目录>/resources/icon.png（主进程 process.resourcesPath 读取）
+extraResources:
+  - from: resources/icon.png
+    to: icon.png
+
+asar: true
+
+# 依赖已全部内联进 out/（无原生模块），跳过 @electron/rebuild 与 node_modules 收集
+npmRebuild: false
+publish: null
+
+win:
+  icon: resources/icon.png
+  target:
+    - target: nsis
+      arch: [x64]
+    - target: portable
+      arch: [x64]
+
+nsis:
+  oneClick: false
+  allowToChangeInstallationDirectory: true
+  createDesktopShortcut: always
+  shortcutName: 黑果短剧
+  artifactName: 黑果短剧-Setup-${version}.${ext}
+
+portable:
+  artifactName: 黑果短剧-便携版-${version}.${ext}
