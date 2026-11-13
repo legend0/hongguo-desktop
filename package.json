@@ -4,6 +4,10 @@
   "private": true,
   "description": "红果短剧第三方桌面客户端（Electron）：协议直连 + 双源降级 + 本地智能推荐 + 独立沉浸式播放器",
   "license": "AGPL-3.0",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/legend0/hongguo-desktop.git"
+  },
   "main": "./out/main/index.js",
   "scripts": {
     "dev": "electron-vite dev",
