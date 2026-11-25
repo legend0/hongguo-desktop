@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: GPL-3.0-only
 const fs = require('node:fs/promises');
+const fsSync = require('node:fs');
 const os = require('node:os');
 const path = require('node:path');
 const { spawn, spawnSync } = require('node:child_process');
@@ -7,6 +8,8 @@ const { assertUnencryptedMp4 } = require('./hongguo');
 
 let cachedHevcDecoderBinary;
 let cachedHevcDecoderSupport = false;
+let cachedTranscoderBinary;
+let cachedTranscoderAvailable = false;
 
 function binaryPath() {
   if (process.env.HONGGUO_BVC2_FFMPEG) return process.env.HONGGUO_BVC2_FFMPEG;
@@ -35,6 +38,24 @@ function supportsHevcDecoder() {
     cachedHevcDecoderSupport = false;
   }
   return cachedHevcDecoderSupport;
+}
+
+/**
+ * 检测 ByteVC2 转码器（ffmpeg）二进制是否就位（结果按路径缓存）。
+ * 取址分级用：缺失时不接受 ByteVC2 档位（UNSUPPORTED_BYTEVC2 提前给出可读错误，
+ * 而非流式播放中途 BYTEVC2_TRANSCODER_UNAVAILABLE）。
+ * @returns {boolean} 转码器二进制存在时返回 true。
+ */
+function transcoderAvailable() {
+  const bin = binaryPath();
+  if (cachedTranscoderBinary === bin) return cachedTranscoderAvailable;
+  cachedTranscoderBinary = bin;
+  try {
+    cachedTranscoderAvailable = Boolean(fsSync.statSync(bin).isFile());
+  } catch (_) {
+    cachedTranscoderAvailable = false;
+  }
+  return cachedTranscoderAvailable;
 }
 
 async function transcodeBytevc2(buffer, key, signal) {
@@ -138,4 +159,4 @@ async function* streamBytevc2(buffer, key, signal) {
     await fs.rm(dir, { recursive: true, force: true });
   }
 }
-module.exports = { binaryPath, supportsHevcDecoder, transcodeBytevc2, streamBytevc2 };
+module.exports = { binaryPath, supportsHevcDecoder, transcoderAvailable, transcodeBytevc2, streamBytevc2 };

@@ -5,7 +5,7 @@ const { pipeline } = require('node:stream/promises');
 const rangeMedia = require('./rangeMedia');
 const appSource = require('../native/app-source');
 const { decryptMp4Buffer } = require('../native/hongguo');
-const { transcodeBytevc2, streamBytevc2, supportsHevcDecoder } = require('../native/bytevc2-transcode');
+const { transcodeBytevc2, streamBytevc2, supportsHevcDecoder, transcoderAvailable } = require('../native/bytevc2-transcode');
 const { normalizeDownloadQuality } = require('../native/download-quality');
 const { webMediaRequestOptions } = require('../native/web-media-guard');
 const logger = require('./logger');
@@ -303,7 +303,7 @@ class StreamService {
   async loadBuffer(vid, quality, signal, allowHevc = true) {
     const t0 = Date.now();
     logger.info('StreamService', `[Decrypt] 开始全量拉取并解密视频: vid=${vid}, quality=${quality}, allowHevc=${allowHevc}`);
-    const playInfo = await appSource.fetchAppPlayUrl(vid, { quality, allowLowerQuality: true, allowBytevc2: true, signal, allowHevc, allowHevcTranscode: this.canTranscodeHevc() });
+    const playInfo = await appSource.fetchAppPlayUrl(vid, { quality, allowLowerQuality: true, allowBytevc2: transcoderAvailable(), signal, allowHevc, allowHevcTranscode: this.canTranscodeHevc() });
     signal.throwIfAborted();
     if (!playInfo?.url) throw new Error('未获取到有效的视频流链接');
     const { buffer, variant } = await this.downloadFastestMedia(playInfo.variants, playInfo, 25000, signal);
@@ -431,7 +431,7 @@ class StreamService {
     if (cached && (cached.active || cached.expires > Date.now() + minValidityMs)) { this.plans.delete(key); this.plans.set(key, cached); return cached.plan; }
     const t0 = Date.now();
     logger.info('StreamService', `开始构建流式分片播放计划: vid=${vid}, quality=${quality}, allowHevc=${allowHevc}`);
-    const info = await appSource.fetchAppPlayUrl(vid, { quality, allowLowerQuality: true, allowBytevc2: true, signal, nextVids, allowHevc, allowHevcTranscode: this.canTranscodeHevc() });
+    const info = await appSource.fetchAppPlayUrl(vid, { quality, allowLowerQuality: true, allowBytevc2: transcoderAvailable(), signal, nextVids, allowHevc, allowHevcTranscode: this.canTranscodeHevc() });
     if (info.codec === 'bytevc2') return progressive && Number.isFinite(info.duration) && info.duration > 0 && info.duration <= 86400 ? { bytevc2: true, info } : null;
     let lastError;
     let hasRangeUnsupported = false;

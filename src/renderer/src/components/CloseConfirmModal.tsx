@@ -52,13 +52,19 @@ export function CloseConfirmModal({ open, onClose }: CloseConfirmModalProps) {
   if (!open) return null;
 
   const choose = (action: CloseActionPref) => {
-    // 先关弹窗再执行动作：否则最小化到托盘恢复后弹窗仍停留在打开状态
+    // 先关弹窗并等其真正从 DOM 移除后，再执行退出/托盘动作（任务 85 交互补充）：
+    // 原实现 onClose() 后同步发 IPC，React 尚未提交弹窗卸载，窗口隐藏/销毁时会残留弹窗一帧
     onClose();
     if (remember) {
       localStorage.setItem(LS_KEY, action);
       void api.win.setCloseAction(action);
     }
-    void (action === 'quit' ? api.win.quitApp() : api.win.hideToTray());
+    setTimeout(
+      () => {
+        void (action === 'quit' ? api.win.quitApp() : api.win.hideToTray());
+      },
+      60, // 一帧渲染（~16ms）的余量，确保弹窗卸载先于窗口隐藏/销毁
+    );
   };
 
   return (

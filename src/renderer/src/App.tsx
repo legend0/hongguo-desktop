@@ -33,6 +33,9 @@ export function App() {
   );
 }
 
+/** KeepAlive 缓存层上限（任务 85）：超出按 LRU 淘汰最久未激活的层 */
+const CACHE_MAX = 8;
+
 function RootLayout() {
   const location = useLocation();
   const { pathname, search } = location;
@@ -40,13 +43,38 @@ function RootLayout() {
   // 缓存键含动态参数：/category/:main 切分类、/rank/:key 切榜单、/actor/:actorId 切演员、
   // /search?keyword= 换关键词，各自独立实例，互不串缓存
   const activeKey = cacheKeyOf(pathname, search);
-  /** 已访问缓存路由快照：键 → 首次访问时的 location（之后常驻渲染、display 切换显隐） */
-  const [cacheMap, setCacheMap] = useState<Map<string, Location>>(new Map());
+  /**
+   * 已访问缓存路由快照：键 → { 首次访问 location, 最近激活时间 }。
+   * LRU 上限（任务 85）：超过 CACHE_MAX 淘汰最久未激活的缓存层——
+   * 搜索每个关键词都会生成独立缓存层，不淘汰会随使用无界增长。
+   */
+  const [cacheMap, setCacheMap] = useState<Map<string, { loc: Location; at: number }>>(new Map());
   useEffect(() => {
-    if (activeKey && !cacheMap.has(activeKey)) {
-      setCacheMap((prev) => new Map(prev).set(activeKey, location));
-    }
-  }, [activeKey, location, cacheMap]);
+    if (!activeKey) return;
+    setCacheMap((prev) => {
+      const hit = prev.get(activeKey);
+      const next = new Map(prev);
+      if (hit) {
+        // 命中：仅刷新活跃时间（location 引用不变，缓存层组件不会重挂载）
+        next.set(activeKey, { loc: hit.loc, at: Date.now() });
+        return next;
+      }
+      if (prev.size >= CACHE_MAX) {
+        // 淘汰最久未激活的缓存层（当前 key 必然不在 prev 中，为新增）
+        let oldestKey = '';
+        let oldestAt = Infinity;
+        for (const [k, v] of prev) {
+          if (v.at < oldestAt) {
+            oldestAt = v.at;
+            oldestKey = k;
+          }
+        }
+        if (oldestKey) next.delete(oldestKey);
+      }
+      next.set(activeKey, { loc: location, at: Date.now() });
+      return next;
+    });
+  }, [activeKey, location]);
 
   // 主题应用（主窗口 + 播放器独立窗口共用）：settings.theme → <html data-theme>
   useTheme();
@@ -102,9 +130,9 @@ function RootLayout() {
         <main className="app-main" id="app-main">
           {/* 缓存层：每个首次访问的缓存路由常驻一份 Routes（location 固定为快照），
               非当前层 display:none 隐藏——DOM/状态/滚动保留，不重新请求 */}
-          {[...cacheMap.entries()].map(([key, snap]) => (
+          {[...cacheMap.entries()].map(([key, entry]) => (
             <CacheLayer key={key} active={key === activeKey}>
-              <Routes location={snap}>
+              <Routes location={entry.loc}>
                 <Route path="/" element={<HomePage />} />
                 <Route path="/category/:main" element={<CategoryPage />} />
                 <Route path="/rank" element={<RankPage />} />
@@ -114,7 +142,7 @@ function RootLayout() {
                 <Route
                   path="/search"
                   // 快照地址解析关键词传入（休眠层不能用 useSearchParams，读的是 Router 真实地址）
-                  element={<SearchPage keyword={new URLSearchParams(snap.search).get('keyword') ?? ''} />}
+                  element={<SearchPage keyword={new URLSearchParams(entry.loc.search).get('keyword') ?? ''} />}
                 />
               </Routes>
             </CacheLayer>

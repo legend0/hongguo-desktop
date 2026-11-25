@@ -3,12 +3,13 @@ import { useCallback, useEffect, useRef, useState, type CSSProperties } from 're
 import { useNavigate, useParams } from 'react-router-dom';
 import { api } from '../api';
 import type { DanmakuItem } from '../api';
-import { useHistory } from '../stores';
+import { useHistory, useSettings } from '../stores';
 import { ErrorTip, Loading } from '../components/Feedback';
 import { toast } from '../components/Toast';
 import Danmaku, { type DanmakuComment } from '../lib/danmaku.dom.js';
 import { renderDanmakuText } from '../lib/danmakuEmoji';
 import { probeHevcSupportSync, verifyHevcSupport } from '../lib/hevc';
+import { Bytevc2Stream, type Bytevc2Session } from '../lib/bytevc2Stream';
 import {
   IconFullscreen, IconPause, IconPlay, IconPrevEp, IconNextEp, IconVolume,
   IconEpList, IconPin,
@@ -193,6 +194,8 @@ export function PlayerPage() {
   const history = useHistory();
 
   const videoRef = useRef<HTMLVideoElement>(null);
+  // 设置页播放器偏好（自动连播/记住进度/默认倍速，任务 85 接线）
+  const settings = useSettings();
   const hlsRef = useRef<Hls | null>(null);
   const boxRef = useRef<HTMLDivElement>(null);
   const lastSaveRef = useRef(0);
@@ -239,11 +242,9 @@ export function PlayerPage() {
   const [pinned, setPinned] = useState(false);
   /** 即将进入下一集提示（剩余播放时间 ≤3s 时显示） */
   const [nextTip, setNextTip] = useState(false);
-  // ===== 自适应切集预加载时机：实测上次"切集起点 → 起播成功"耗时 n（秒），
-  // 预取触发阈值 = min(max(n + 3, 3), 视频时长一半)，每次切集后用新实测值滚动更新 =====
-  /** 上次实测切集耗时（秒），初值 3s 与原固定提前量一致 */
-  const loadSecsRef = useRef(3);
-  /** 本次切集/首载起点时间戳（视频源挂载时记录，起播成功时结算） */
+  // ===== 切集预加载：预取窗口统一 15s（覆盖 ByteVC2 取址+转码 12-16s），
+  // 切集起点计时仅保留用于日志排查，不再参与触发计算 =====
+  /** 本次切集/首载起点时间戳（视频源挂载时记录，起播成功时清零） */
   const switchStartRef = useRef(0);
   /** 已预取的分集 id（防止时间更新事件重复触发预取；切集后复位允许下一集预取） */
   const preloadedRef = useRef('');
@@ -320,10 +321,17 @@ export function PlayerPage() {
 
   // ===== 视频直链（随集切换；force 跳过主进程缓存重取） =====
   const retryRef = useRef(0);
+  /** 取址代次：切集 effect 递增；延迟重试/旧响应若代次已过期则丢弃，防止切集后旧集覆盖新集（任务 85） */
+  const resolveSeqRef = useRef(0);
+  /** 延迟重试定时器句柄：切集时清理，避免旧集定时器在新集上触发 */
+  const resolveTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   // HEVC 硬解能力（同步探测 + MediaCapabilities 异步校验，进程内缓存）；
   // 取址/预取随参数透传，服务端据此选择 H264 片源或 ffmpeg 转码兜底
   const hevcSupportedRef = useRef(probeHevcSupportSync());
   const hevcFallbackRef = useRef(false);
+  // ByteVC2 渐进播放会话（MSE）：换集/卸载时 stop 释放；已探测过的 URL 不重复探测
+  const bytevc2SessionRef = useRef<Bytevc2Session | null>(null);
+  const bytevc2TriedRef = useRef<Set<string>>(new Set());
   useEffect(() => {
     let alive = true;
     void verifyHevcSupport().then((ok) => {
@@ -362,6 +370,8 @@ export function PlayerPage() {
 
   const resolveVideo = useCallback(
     (force = false) => {
+      // 捕获发起时的代次：await 期间发生切集（代次递增）则响应过期，整体丢弃
+      const seq = resolveSeqRef.current;
       setResolving(true);
       setPlayErr('');
       setVideoUrl('');
@@ -371,8 +381,15 @@ export function PlayerPage() {
       return api
         .getPlayInfo(seriesId, itemId, force, nextVidRef.current, hevcSupportedRef.current)
         .then((info) => {
+          if (seq !== resolveSeqRef.current) return undefined;
           if (!info.videoUrl) throw new Error('未取到视频地址，请稍后重试');
-          setVideoUrl(info.videoUrl);
+          // ByteVC2 渐进模式标记（demo mse=1）：MSE 可用时附在流地址上——
+          // 普通分集该参数无副作用；ByteVC2 分集服务端返回 409，
+          // 由 handleVideoError 探测后启动 MSE 边转边播会话
+          const url = Bytevc2Stream.supported()
+            ? info.videoUrl + (info.videoUrl.includes('?') ? '&' : '?') + 'mse=1'
+            : info.videoUrl;
+          setVideoUrl(url);
           setVideoFormat(info.format);
           // 起播成功：清除冷却，重置失败/重置设备计数
           if (cooldownTimerRef.current) {
@@ -384,6 +401,8 @@ export function PlayerPage() {
           setResetCount(0);
         })
         .catch((e) => {
+          // 代次过期（切集后的旧取址错误）：静默丢弃，不污染新集状态
+          if (seq !== resolveSeqRef.current) return;
           if (isLockedQuotaError(e)) {
             // 付费集免费通道繁忙：友好文案 + 30s 冷却
             setPlayErr(LOCKED_QUOTA_MSG);
@@ -399,6 +418,12 @@ export function PlayerPage() {
   );
 
   useEffect(() => {
+    // 切集：代次递增使在途旧取址与延迟重试全部过期失效
+    resolveSeqRef.current += 1;
+    if (resolveTimerRef.current) {
+      clearTimeout(resolveTimerRef.current);
+      resolveTimerRef.current = null;
+    }
     retryRef.current = 0;
     // 切集瞬间立即释放旧媒体源（黑屏过渡）：
     // ① 起播 effect 会因 itemId 变化先跑，此时 videoUrl 还是旧集且旧视频 readyState≥1，
@@ -407,6 +432,10 @@ export function PlayerPage() {
     //    起播只能等新集 loadedmetadata，两个问题一并消除。
     hlsRef.current?.destroy();
     hlsRef.current = null;
+    // 换集前停掉 ByteVC2 渐进会话（旧 blob URL 与取流必须释放，避免误触发旧集错误处理）
+    bytevc2SessionRef.current?.stop();
+    bytevc2SessionRef.current = null;
+    bytevc2TriedRef.current.clear();
     const v = videoRef.current;
     if (v) {
       v.pause();
@@ -414,18 +443,71 @@ export function PlayerPage() {
       v.load();
     }
     void resolveVideo(false);
+    return () => {
+      if (resolveTimerRef.current) clearTimeout(resolveTimerRef.current);
+    };
   }, [resolveVideo]);
 
-  // ===== 视频加载失败：强制重取直链再试（签名 URL 约 40 分钟过期） =====
+  // ===== 视频加载失败：ByteVC2 渐进探测 + 强制重取直链再试（签名 URL 约 40 分钟过期） =====
+  // video error 在 mse=1 模式下是预期信号——ByteVC2 分集服务端返回 409（BYTEVC2_PROGRESSIVE），
+  // 探测确认后启动 MSE 边转边播会话（首帧秒开）；MSE 失败回退 mse=buffered 全集转码缓冲模式。
+  // 其余错误维持原重试逻辑（重取直链最多 2 次）。
   const handleVideoError = useCallback(() => {
-    if (retryRef.current < 2) {
-      retryRef.current += 1;
-      setTimeout(() => void resolveVideo(true), 400);
-    } else {
-      setPlayErr((prev) => prev || '视频加载失败，请点击重试');
-      setFailCount((c) => c + 1);
+    const v = videoRef.current;
+    const url = videoUrl;
+    const retry = () => {
+      if (retryRef.current < 2) {
+        retryRef.current += 1;
+        // 延迟重试以发起时代次为准：切集后旧定时器不触发（回调内校验代次）
+        const seq = resolveSeqRef.current;
+        if (resolveTimerRef.current) clearTimeout(resolveTimerRef.current);
+        resolveTimerRef.current = setTimeout(() => {
+          if (seq === resolveSeqRef.current) void resolveVideo(true);
+        }, 400);
+      } else {
+        setPlayErr((prev) => prev || '视频加载失败，请点击重试');
+        setFailCount((c) => c + 1);
+      }
+    };
+    if (v && url && url.includes('mse=1') && !bytevc2TriedRef.current.has(url)) {
+      bytevc2TriedRef.current.add(url);
+      void (async () => {
+        let started = false;
+        try {
+          const res = await fetch(url);
+          if (res.status === 409) {
+            const data = await res.json();
+            if (data?.code === 'BYTEVC2_PROGRESSIVE') {
+              bytevc2SessionRef.current?.stop();
+              const fallback = () => {
+                // MSE 会话失败：回退 buffered 模式（服务端全集转码后整段供给）
+                bytevc2SessionRef.current = null;
+                v.src = url.replace('mse=1', 'mse=buffered');
+                v.load();
+                void v.play().catch(() => {});
+              };
+              bytevc2SessionRef.current = Bytevc2Stream.start(
+                v,
+                url.replace('mse=1', 'mse=stream'),
+                Number(data.duration) || 0,
+                fallback,
+              );
+              void v.play().catch(() => {});
+              started = true;
+            }
+          } else {
+            // 非 ByteVC2 分集错误：释放未消费的响应体
+            await res.body?.cancel().catch(() => {});
+          }
+        } catch {
+          /* 探测失败（网络中断等）走常规重试 */
+        }
+        if (!started) retry();
+      })();
+      return;
     }
-  }, [resolveVideo]);
+    retry();
+  }, [resolveVideo, videoUrl]);
 
   // ===== 挂载视频源（hls.js / 原生） =====
   useEffect(() => {
@@ -450,11 +532,19 @@ export function PlayerPage() {
       v.src = videoUrl;
     }
     v.volume = volume;
-    v.playbackRate = RATE_OPTIONS[rateIdx];
+    // 倍速生效：本地持久化档位优先（用户在播放器里改过会写 LS_RATE），
+    // 否则应用设置页「默认倍速」（水合晚于首次取址的毫秒级窗口可忽略）
+    const storedRate = localStorage.getItem(LS_RATE);
+    const rateValue =
+      storedRate !== null ? RATE_OPTIONS[rateIdx] : settings.defaultSpeed;
+    v.playbackRate = RATE_OPTIONS.includes(rateValue) ? rateValue : 1;
 
     return () => {
       hlsRef.current?.destroy();
       hlsRef.current = null;
+      // 卸载/换源时释放 ByteVC2 渐进会话（中止取流 + revoke blob URL）
+      bytevc2SessionRef.current?.stop();
+      bytevc2SessionRef.current = null;
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [videoUrl, videoFormat]);
@@ -475,10 +565,20 @@ export function PlayerPage() {
       if (hevcSupportedRef.current && !v.videoWidth && !v.videoHeight && !hevcFallbackRef.current) {
         hevcFallbackRef.current = true;
         hevcSupportedRef.current = false;
-        setTimeout(() => void resolveVideo(true), 400);
+        // HEVC 兜底重取同样受代次保护：切集后旧集定时器失效（任务 85）
+        const seq = resolveSeqRef.current;
+        if (resolveTimerRef.current) clearTimeout(resolveTimerRef.current);
+        resolveTimerRef.current = setTimeout(() => {
+          if (seq === resolveSeqRef.current) void resolveVideo(true);
+        }, 400);
         return;
       }
-      if (saved && saved.positionSec > 5 && saved.positionSec < (v.duration || Infinity) - 5) {
+      if (
+        settings.rememberProgress &&
+        saved &&
+        saved.positionSec > 5 &&
+        saved.positionSec < (v.duration || Infinity) - 5
+      ) {
         v.currentTime = saved.positionSec;
       }
       void v.play().catch(() => setPlaying(false));
@@ -875,7 +975,7 @@ export function PlayerPage() {
     return () => document.removeEventListener('fullscreenchange', onFs);
   }, []);
 
-  // ===== 下一集预加载（无感切换，自适应时机）：由 onTime 按剩余时间触发后台整集预解密，
+  // ===== 下一集预加载（无感切换，统一 15s 窗口）：由 onTime 按剩余时间触发后台整集预解密，
   // 切集时主进程命中完整内存缓存直接进入缓冲播放，消除切集卡顿缓冲。幂等，重复触发自动跳过
 
   // ===== video 事件（JSX 里绑定的小工具） =====
@@ -885,10 +985,10 @@ export function PlayerPage() {
     setCur(v.currentTime);
     if (v.buffered.length) setBuffered(v.buffered.end(v.buffered.length - 1));
     const remain = Number.isFinite(v.duration) ? v.duration - v.currentTime : Infinity;
-    // 自适应预取窗口：剩余 ≤ min(max(n+3, 3), 时长/2) 时预取下一集
-    //（n 为上次实测切集耗时；时长一半作为上限，超短集最多提前到半集处触发）
+    // 预取窗口统一 15s（实测：HEVC 集预解密约 0.5s，ByteVC2 集取址+转码需 12-16s，
+    // 原 3s 自适应窗口对 ByteVC2 必然赶不上切集）；超短集最多提前到半集处触发
     if (nextEp?.id && remain > 0) {
-      const preloadAhead = Math.min(Math.max(loadSecsRef.current + 3, NEXT_TIP_SECONDS), Math.max(v.duration / 2, 0));
+      const preloadAhead = Math.min(15, Math.max(v.duration / 2, 0));
       if (remain <= preloadAhead && preloadedRef.current !== nextEp.id) {
         preloadedRef.current = nextEp.id;
         void api.streamPrefetch(nextEp.id, hevcSupportedRef.current).catch(() => { });
@@ -976,12 +1076,7 @@ export function PlayerPage() {
         onPlaying={() => {
           setBuffering(false);
           retryRef.current = 0; // 起播成功，重置重试计数
-          // 自适应预加载结算：本次"切集起点 → 起播成功"耗时 n（秒，限幅 1~15），
-          // 作为下一集预取触发阈值（n+3）的依据；普通暂停恢复不计时（起点已在结算后清零）
-          if (switchStartRef.current > 0) {
-            loadSecsRef.current = Math.min(Math.max((Date.now() - switchStartRef.current) / 1000, 1), 15);
-            switchStartRef.current = 0;
-          }
+          switchStartRef.current = 0; // 结算计时（预取窗口已固定 15s，实测值不再参与触发计算）
         }}
         onCanPlay={() => setBuffering(false)}
         onError={handleVideoError}
@@ -989,7 +1084,8 @@ export function PlayerPage() {
         onDurationChange={() => setDur(videoRef.current?.duration || 0)}
         onEnded={() => {
           saveProgress(true);
-          if (nextEp) goEpisode(nextEp);
+          // 设置页「自动连播」开关：关闭时停在片尾（任务 85 接线）
+          if (settings.autoNext && nextEp) goEpisode(nextEp);
         }}
       />
 

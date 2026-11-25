@@ -186,6 +186,9 @@ export function createMainWindow(): void {
   // Alt+F4 / 任务栏关闭等系统级关闭也走这里；渲染层"关闭"按钮同样触发 win.close()
   win.on('close', (e) => {
     if (appState.quitting) return; // 真正退出：放行
+    // 记住「直接退出」（任务 85 修复：原版 quit 分支缺失，Alt+F4 仍弹确认框）：
+    // 放行关闭，窗口销毁后由 window-all-closed 退出应用
+    if (appState.closeAction === 'quit') return;
     e.preventDefault();
     if (appState.closeAction === 'tray') {
       hideMainWindowToTray();

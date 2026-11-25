@@ -19,9 +19,13 @@ files:
   - "!**/*.map"
 
 # 托盘图标：打包后位于 <安装目录>/resources/icon.png（主进程 process.resourcesPath 读取）
+# ByteVC2 转码器：build/bytevc2/<arch>/ffmpeg.exe → <resources>/bytevc2/ffmpeg.exe
+# （bytevc2-transcode.js binaryPath 打包态解析路径，与参考项目 extraResources 模式一致）
 extraResources:
   - from: resources/icon.png
     to: icon.png
+  - from: build/bytevc2/${arch}
+    to: bytevc2
 
 asar: true
 

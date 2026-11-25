@@ -45,11 +45,40 @@ function assertCircuitClosed() {
 const playInflight = new Map();
 
 /**
+ * 在途共享等待者与底层任务解耦取消：底层 promise 绑定的超时信号由主任务持有，
+ * 等待者各自的 abort 信号只影响自身返回（提前 reject），不波及其它共享者（任务 85）。
+ * @param {Promise<Object>} p - 共享的取址 promise
+ * @param {AbortSignal} [signal] - 当前等待者的取消信号
+ * @returns {Promise<Object>} 仅受当前等待者 signal 与底层任务结果影响的 promise
+ */
+function detachSignal(p, signal) {
+    if (!signal) return p;
+    if (signal.aborted) {
+        return Promise.reject(Object.assign(new Error('已取消'), { code: 'ERR_CANCELED' }));
+    }
+    return new Promise((resolve, reject) => {
+        const onAbort = () => reject(Object.assign(new Error('已取消'), { code: 'ERR_CANCELED' }));
+        signal.addEventListener('abort', onAbort, { once: true });
+        p.then(
+            (v) => {
+                signal.removeEventListener('abort', onAbort);
+                resolve(v);
+            },
+            (e) => {
+                signal.removeEventListener('abort', onAbort);
+                reject(e);
+            },
+        );
+    });
+}
+
+/**
  * App 端取址入口（含失败熔断 + 并发去重）：
  * - 每次调用先做熔断检查（60s 内 ≥5 次服务端拒绝失败 → 45s 内快速失败）；
  * - 仅统计 EMPTY_RESPONSE / BUSINESS_REJECTED（服务端拒绝类），网络/超时类不计入，
  *   避免弱网环境被误熔断；
- * - 同分集并发调用共享同一次取址，refresh=true 的强制刷新不参与共享。
+ * - 并发去重按「vid + 全部解析参数」为键共享同一次取址（任务 85），refresh=true 不参与；
+ *   等待者各自的 abort 信号经 detachSignal 解耦，只取消自身不波及其它共享者。
  * @param {string} vid - 分集编号
  * @param {{quality?: string, allowLowerQuality?: boolean, allowBytevc2?: boolean, allowHevc?: boolean, allowHevcTranscode?: boolean, refresh?: boolean, nextVid?: string, nextVids?: string[], signal?: AbortSignal}} [options] - 取址选项
  * @returns {Promise<Object>} 播放信息（首选变体 + variants 全集 + duration）
@@ -57,8 +86,21 @@ const playInflight = new Map();
  */
 async function fetchAppPlayUrl(vid, options = {}) {
     assertCircuitClosed();
-    const key = String(vid || '');
-    if (!options.refresh && playInflight.has(key)) return playInflight.get(key);
+    // 共享键纳入全部解析参数：不同清晰度/HEVC 能力/续播预取参数的调用不共享结果，
+    // 避免后到者拿到按首个调用者参数过滤的变体（任务 85）
+    const key = [
+        String(vid || ''),
+        options.quality ?? '',
+        options.allowLowerQuality === true ? 'lq' : '',
+        options.allowBytevc2 === true ? 'bv2' : '',
+        options.allowHevc === false ? 'nohevc' : '',
+        options.allowHevcTranscode === true ? 'hevcTc' : '',
+        options.nextVid ? String(options.nextVid) : '',
+        Array.isArray(options.nextVids) ? options.nextVids.join(',') : '',
+    ].join('|');
+    if (!options.refresh && playInflight.has(key)) {
+        return detachSignal(playInflight.get(key), options.signal);
+    }
     const p = (async () => {
         try {
             return await fetchAppPlayUrlInner(vid, options);
@@ -86,7 +128,9 @@ async function fetchAppPlayUrlInner(vid, options = {}) {
     if (!/^\d{1,30}$/.test(vid)) throw new Error('分集编号无效');
     const deadline = Date.now() + 12000;
     const timeoutSignal = AbortSignal.timeout(12000);
-    const signal = options.signal ? AbortSignal.any([timeoutSignal, options.signal]) : timeoutSignal;
+    // 底层任务只绑超时信号（任务 85）：等待者的个人取消由共享层 detachSignal 解耦，
+    // 避免首个调用者 abort 使共享中的其它等待者一并失败；12s 超时兜底仍然生效
+    const signal = timeoutSignal;
     // 当前设备机型档案（同步读取内存/持久化身份，不触发注册请求），用于流 UA 与设备参数一致
     const profile = getPlaybackDevice.currentProfile?.() || DEFAULT_PROFILE;
     // HEVC 能力透传（渲染层硬解探测结果；allowHevcTranscode 表示可用 ffmpeg 兜底转码）

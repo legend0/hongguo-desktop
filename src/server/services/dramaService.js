@@ -258,6 +258,9 @@ class DramaService {
     logger.info('DramaService', `解析单集播放元信息 vid=${vid}, quality=${quality}${options?.nextVid ? `, 预取下一集=${options.nextVid}` : ''}`);
     const playInfo = await appSource.fetchAppPlayUrl(String(vid), {
       quality, allowLowerQuality: true,
+      // 播放探测路径与流端点对齐：本集仅含 ByteVC2 档时不再提前误杀
+      // （真正播放走 streamService 流式转码，此处结果仅用于快速失败校验与预取）
+      allowBytevc2: true,
       ...(options?.nextVid ? { nextVid: options.nextVid } : {}),
     });
     if (!playInfo || !playInfo.url) {
