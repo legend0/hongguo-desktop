@@ -25,6 +25,19 @@ class DramaService {
   }
 
   /**
+   * 写入分类列表缓存并做 LRU 上限（任务 87）：
+   * 键为 page|category|genre 组合，空间无界（15s TTL 只影响命中不影响清理），
+   * 超出上限淘汰最旧的条目。
+   * @param {string} key - 缓存键（page|category|genre）
+   * @param {object} data - 目录结果
+   * @returns {void}
+   */
+  setCatalogCache(key, data) {
+    this.catalogCache.set(key, { data, expires: Date.now() + 15000 });
+    while (this.catalogCache.size > 60) this.catalogCache.delete(this.catalogCache.keys().next().value);
+  }
+
+  /**
    * 搜索短剧
    */
   async search(keyword, page = 1) {
@@ -125,7 +138,7 @@ class DramaService {
         const res = await hgCatalog.browseList({ page, category, genre });
         if (res && res.success !== false && Array.isArray(res.results)) {
           logger.info('DramaService', `成功获取分类短剧: 返回 ${res.results.length} 部短剧, total=${res.total}, 耗时 ${Date.now() - t0}ms`);
-          this.catalogCache.set(`${page}|${category}|${genre}`, { data: res, expires: Date.now() + 15000 });
+          this.setCatalogCache(`${page}|${category}|${genre}`, res);
           return res;
         }
         // 协议层失败对象（success:false）：真实原因在 res.error/res.code，记录后按码决定是否重试
@@ -145,7 +158,7 @@ class DramaService {
 
     // 会话游标失效（分页记录过期被丢弃）：重试同页永远无游标，引导用户刷新重建
     if (lastErr?.code === 'APP_CURSOR') {
-      throw Object.assign(new Error('列表已过期，请刷新重新加载'), { status: 502 });
+      throw Object.assign(new Error('列表已过期，请刷新重新加载'), { status: 502, code: 'SESSION_EXPIRED' });
     }
     if (category !== 'hot-drama' || genre) {
       throw Object.assign(new Error(lastErr?.message || '所选分类暂不可用，请稍后重试'), { status: 502 });
@@ -162,7 +175,7 @@ class DramaService {
           hasMore: fallback.hasMore || false,
           fallback: true
         };
-        this.catalogCache.set(`${page}|${category}|${genre}`, { data: wrapped, expires: Date.now() + 15000 });
+        this.setCatalogCache(`${page}|${category}|${genre}`, wrapped);
         return wrapped;
       }
     } catch (e) {

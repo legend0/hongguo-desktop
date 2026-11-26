@@ -220,6 +220,9 @@ export const api = {
     toggleMaximize: (): Promise<boolean> => hg.win.toggleMaximize(),
     close: (): Promise<void> => hg.win.close(),
     isMaximized: (): Promise<boolean> => hg.win.isMaximized(),
+    /** 最大化状态变化订阅（最大化/还原时回调）。@returns 解绑函数 */
+    onMaximizedChanged: (cb: (maximized: boolean) => void): (() => void) =>
+      hg.win.onMaximizedChanged(cb),
     /** 最小化到托盘（窗口隐藏，托盘图标保留） */
     hideToTray: (): Promise<void> => hg.win.hideToTray(),
     /** 真正退出应用（绕过关闭确认） */
@@ -316,6 +319,7 @@ declare global {
         toggleMaximize(): Promise<boolean>;
         close(): Promise<void>;
         isMaximized(): Promise<boolean>;
+        onMaximizedChanged(cb: (maximized: boolean) => void): () => void;
         hideToTray(): Promise<void>;
         quitApp(): Promise<void>;
         setCloseAction(action: 'ask' | 'quit' | 'tray'): Promise<void>;

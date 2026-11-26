@@ -55,8 +55,9 @@ export function SettingsPage() {
   const [loginBusy, setLoginBusy] = useState(false);
 
   useEffect(() => {
-    void api.app.getLoginItem().then(setOpenAtLogin);
-    void api.getAuthState().then(setAuthState);
+    // 初始态查询失败静默降级（任务 87）：保持默认值，不打断设置页渲染
+    void api.app.getLoginItem().then(setOpenAtLogin).catch(() => {});
+    void api.getAuthState().then(setAuthState).catch(() => {});
     void api.app.getVersion().then(setAppVersion).catch(() => setAppVersion('0.1.0'));
   }, []);
 

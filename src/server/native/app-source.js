@@ -213,8 +213,10 @@ function signedSearchRequest({ keyword, page = 1, cursor = null, identity } = {}
     // Search uses the hongguoTV 7.2.2.32 profile and only hash branch 0.
     const profile = identity?.profile || DEFAULT_PROFILE;
     const { profile: _omitProfile, ...ids } = identity || {};
+    // device 仅含标量字段进 query（任务 87）：profile 对象若混入，
+    // pythonUrlEncode 会序列化成 "profile=[object Object]" 污染搜索签名 query
     const device = { ...DEVICE, version_code: '72232', version_name: '7.2.2.32', manifest_version_code: '72232',
-        update_version_code: '72232', pv_player: '72232', ...deviceQuery(profile), iid: ids.iid, device_id: ids.device_id, cdid: ids.cdid, profile };
+        update_version_code: '72232', pv_player: '72232', ...deviceQuery(profile), iid: ids.iid, device_id: ids.device_id, cdid: ids.cdid };
     const khronos = Math.floor(Date.now() / 1000), ticketBase = Date.now();
     const authHeaders = loginState.authHeaders();
     const base = { ...device, query: String(keyword || '').slice(0, 80), count: '20', tab_type: '11',
@@ -239,7 +241,7 @@ function signedSearchRequest({ keyword, page = 1, cursor = null, identity } = {}
         'passport-sdk-version': '50561', 'x-xs-from-web': '0', 'x-khronos': String(khronos),
         'x-ladon': be32(khronos).toString('base64'), 'x-argus': le32(khronos).toString('base64'),
         'x-gorgon': xGorgon(query, null, khronos, random), 'x-helios': helios(khronos),
-        'x-medusa': buildMedusa(url, null, khronos, device), 'x-tt-dt': '',
+        'x-medusa': buildMedusa(url, null, khronos, { ...device, profile }), 'x-tt-dt': '',
     };
     return { url, headers };
 }

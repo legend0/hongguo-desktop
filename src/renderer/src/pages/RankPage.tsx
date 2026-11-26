@@ -71,6 +71,7 @@ export function RankPage() {
       onRetry={reload}
       onRetryMore={retryMore}
       onLoadMore={loadMore}
+      contentKey={items.length}
       empty={!loading && !error && items.length === 0 ? <div className="center-tip">该榜单暂无内容</div> : undefined}
     >
       <RankList items={items} />

@@ -1,5 +1,5 @@
 import Hls from 'hls.js';
-import { useCallback, useEffect, useRef, useState, type CSSProperties } from 'react';
+import { useCallback, useEffect, useRef, useState, type CSSProperties, type RefObject } from 'react';
 import { useNavigate, useParams } from 'react-router-dom';
 import { api } from '../api';
 import type { DanmakuItem } from '../api';
@@ -182,6 +182,106 @@ function fmt(sec: number): string {
   return h ? `${h}:${mm}:${ss}` : `${mm}:${ss}`;
 }
 
+/** video 元素引用类型（useRef<HTMLVideoElement>(null) 的推断形态） */
+type VideoRef = RefObject<HTMLVideoElement>;
+
+/**
+ * video 时间快照订阅（任务 87）：rAF 每帧读取 currentTime/buffered，
+ * 值不变时 setState 自动 bail out（暂停/加载中零渲染）。
+ * 供进度条/时间文本等小组件各自调用，替代原 onTimeUpdate 高频 setState 全树重渲染。
+ * @param videoRef - video 元素引用
+ * @returns {{t: number, buf: number}} 当前播放时间与缓冲末端（秒）
+ */
+function useVideoTime(videoRef: VideoRef): { t: number; buf: number } {
+  const [t, setT] = useState(0);
+  const [buf, setBuf] = useState(0);
+  useEffect(() => {
+    let raf = 0;
+    const tick = () => {
+      const v = videoRef.current;
+      if (v) {
+        setT(v.currentTime);
+        if (v.buffered.length) setBuf(v.buffered.end(v.buffered.length - 1));
+      }
+      raf = requestAnimationFrame(tick);
+    };
+    raf = requestAnimationFrame(tick);
+    return () => cancelAnimationFrame(raf);
+  }, [videoRef]);
+  return { t, buf };
+}
+
+/**
+ * 主进度条（底部控制栏）：拖拽 seek + 缓冲/已播进度显示。
+ * 时间驱动 state 内聚于本组件，rAF 高频更新不波及 PlayerPage 全树（任务 87）。
+ * @param props.videoRef - video 元素引用（读取 currentTime/duration 与 seek）
+ * @param props.dur - 当前分集总时长（秒；主组件 onDurationChange 维护，0 表示未知）
+ */
+function PlayerProgressBar({ videoRef, dur }: { videoRef: VideoRef; dur: number }) {
+  const { t, buf } = useVideoTime(videoRef);
+  const barRef = useRef<HTMLDivElement>(null);
+  const seekToEvent = (clientX: number) => {
+    const bar = barRef.current;
+    const v = videoRef.current;
+    if (!bar || !v || !Number.isFinite(v.duration)) return;
+    const rect = bar.getBoundingClientRect();
+    v.currentTime = ((clientX - rect.left) / rect.width) * v.duration;
+  };
+  const [scrubbing, setScrubbing] = useState(false);
+  useEffect(() => {
+    if (!scrubbing) return;
+    const move = (e: PointerEvent) => seekToEvent(e.clientX);
+    const up = () => setScrubbing(false);
+    window.addEventListener('pointermove', move);
+    window.addEventListener('pointerup', up, { once: true });
+    return () => {
+      window.removeEventListener('pointermove', move);
+      window.removeEventListener('pointerup', up);
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [scrubbing]);
+  const playedPct = dur ? (t / dur) * 100 : 0;
+  const bufferedPct = dur ? (Math.min(buf, dur) / dur) * 100 : 0;
+  return (
+    <div
+      ref={barRef}
+      className="pc-progress"
+      onPointerDown={(e) => {
+        setScrubbing(true);
+        seekToEvent(e.clientX);
+      }}
+    >
+      <div className="pc-progress-buffer" style={{ width: `${bufferedPct}%` }} />
+      <div className="pc-progress-played" style={{ width: `${playedPct}%` }}>
+        <span className="pc-progress-dot" />
+      </div>
+    </div>
+  );
+}
+
+/** 播放时间文本（当前时间/总时长）：时间驱动 state 内聚，同任务 87 */
+function PlayerTimeText({ videoRef, dur }: { videoRef: VideoRef; dur: number }) {
+  const { t } = useVideoTime(videoRef);
+  return (
+    <span className="pc-time">
+      {fmt(t)} <em>/</em> {fmt(dur)}
+    </span>
+  );
+}
+
+/** 迷你进度条（控制栏隐藏时底部常驻细条）：纯展示，同任务 87 */
+function PlayerMiniBar({ videoRef, dur }: { videoRef: VideoRef; dur: number }) {
+  const { t, buf } = useVideoTime(videoRef);
+  const playedPct = dur ? (t / dur) * 100 : 0;
+  const bufferedPct = dur ? (Math.min(buf, dur) / dur) * 100 : 0;
+  return (
+    <div className="mini-progress" aria-hidden="true">
+      <div className="mini-progress-buffer" style={{ width: `${bufferedPct}%` }} />
+      <div className="mini-progress-played" style={{ width: `${playedPct}%` }} />
+    </div>
+  );
+}
+
 /**
  * 播放器窗口页：独立无边框窗口的全屏沉浸式播放器。
  * - 顶部栏（可拖拽移动窗口）：剧名 · 第 N 集 + 关闭按钮，显隐跟随控制栏
@@ -220,9 +320,9 @@ export function PlayerPage() {
 
   const [playing, setPlaying] = useState(false);
   const [buffering, setBuffering] = useState(true);
-  const [cur, setCur] = useState(0);
   const [dur, setDur] = useState(0);
-  const [buffered, setBuffered] = useState(0);
+  // cur/buffered 时间驱动 UI 已下放 PlayerProgress 子组件（任务 87）：
+  // timeupdate/rAF 高频 setState 只重渲染进度条小组件，不再波及 PlayerPage 全树
   // 音量持久化值校验：非法/越界回退 1（防止 localStorage 被改坏后 video 无法出声）
   const [volume, setVolume] = useState(() => {
     const v = Number(localStorage.getItem(LS_VOLUME));
@@ -375,9 +475,7 @@ export function PlayerPage() {
       setResolving(true);
       setPlayErr('');
       setVideoUrl('');
-      setCur(0);
       setDur(0);
-      setBuffered(0);
       return api
         .getPlayInfo(seriesId, itemId, force, nextVidRef.current, hevcSupportedRef.current)
         .then((info) => {
@@ -474,7 +572,8 @@ export function PlayerPage() {
       void (async () => {
         let started = false;
         try {
-          const res = await fetch(url);
+          // 探测请求带 8s 超时（任务 87）：服务端挂起时不再永悬卡死，超时走常规重试
+          const res = await fetch(url, { signal: AbortSignal.timeout(8000) });
           if (res.status === 409) {
             const data = await res.json();
             if (data?.code === 'BYTEVC2_PROGRESSIVE') {
@@ -982,8 +1081,6 @@ export function PlayerPage() {
   const onTime = () => {
     const v = videoRef.current;
     if (!v) return;
-    setCur(v.currentTime);
-    if (v.buffered.length) setBuffered(v.buffered.end(v.buffered.length - 1));
     const remain = Number.isFinite(v.duration) ? v.duration - v.currentTime : Infinity;
     // 预取窗口统一 15s（实测：HEVC 集预解密约 0.5s，ByteVC2 集取址+转码需 12-16s，
     // 原 3s 自适应窗口对 ByteVC2 必然赶不上切集）；超短集最多提前到半集处触发
@@ -998,35 +1095,10 @@ export function PlayerPage() {
     setNextTip(Boolean(nextEp) && remain > 0 && remain <= NEXT_TIP_SECONDS);
   };
 
-  // 进度条拖拽
-  const barRef = useRef<HTMLDivElement>(null);
-  const seekToEvent = (clientX: number) => {
-    const bar = barRef.current;
-    const v = videoRef.current;
-    if (!bar || !v || !Number.isFinite(v.duration)) return;
-    const rect = bar.getBoundingClientRect();
-    v.currentTime = ((clientX - rect.left) / rect.width) * v.duration;
-  };
-  const [scrubbing, setScrubbing] = useState(false);
-  useEffect(() => {
-    if (!scrubbing) return;
-    const move = (e: PointerEvent) => seekToEvent(e.clientX);
-    const up = () => setScrubbing(false);
-    window.addEventListener('pointermove', move);
-    window.addEventListener('pointerup', up, { once: true });
-    return () => {
-      window.removeEventListener('pointermove', move);
-      window.removeEventListener('pointerup', up);
-    };
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [scrubbing]);
-
   // ===== 渲染 =====
   if (detailErr) return <ErrorTip message={detailErr} onRetry={() => window.location.reload()} />;
   if (!detail) return <Loading />;
 
-  const playedPct = dur ? (cur / dur) * 100 : 0;
-  const bufferedPct = dur ? (Math.min(buffered, dur) / dur) * 100 : 0;
   const chromeOn = showControls || !playing;
 
   return (
@@ -1208,19 +1280,7 @@ export function PlayerPage() {
 
       {/* ===== 底部控制栏 ===== */}
       <div className="player-controls" onClick={(e) => e.stopPropagation()}>
-        <div
-          ref={barRef}
-          className="pc-progress"
-          onPointerDown={(e) => {
-            setScrubbing(true);
-            seekToEvent(e.clientX);
-          }}
-        >
-          <div className="pc-progress-buffer" style={{ width: `${bufferedPct}%` }} />
-          <div className="pc-progress-played" style={{ width: `${playedPct}%` }}>
-            <span className="pc-progress-dot" />
-          </div>
-        </div>
+        <PlayerProgressBar videoRef={videoRef} dur={dur} />
         <div className="pc-row">
           <button className="pc-btn" onClick={togglePlay} aria-label="播放/暂停">
             {playing ? <IconPause size={19} /> : <IconPlay size={19} />}
@@ -1243,9 +1303,7 @@ export function PlayerPage() {
           >
             <IconNextEp size={17} />
           </button>
-          <span className="pc-time">
-            {fmt(cur)} <em>/</em> {fmt(dur)}
-          </span>
+          <PlayerTimeText videoRef={videoRef} dur={dur} />
           <span className="pc-flex" />
           {/* 弹幕开关 + 显示设置面板 */}
           <div className="pc-danmaku">
@@ -1372,12 +1430,7 @@ export function PlayerPage() {
       </div>
 
       {/* ===== 迷你进度条：控制栏隐藏时底部 2px 常驻细条（纯展示，鼠标移动即唤起控制栏） ===== */}
-      {!chromeOn && dur > 0 ? (
-        <div className="mini-progress" aria-hidden="true">
-          <div className="mini-progress-buffer" style={{ width: `${bufferedPct}%` }} />
-          <div className="mini-progress-played" style={{ width: `${playedPct}%` }} />
-        </div>
-      ) : null}
+      {!chromeOn && dur > 0 ? <PlayerMiniBar videoRef={videoRef} dur={dur} /> : null}
     </div>
   );
 }

@@ -62,6 +62,7 @@ export function CategoryPage() {
       onRetry={reload}
       onRetryMore={retryMore}
       onLoadMore={loadMore}
+      contentKey={items.length}
       empty={
         items.length === 0 ? <div className="center-tip">该分类暂无内容</div> : null
       }

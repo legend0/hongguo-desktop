@@ -121,23 +121,40 @@ const KEY = {
   searchHistory: 'searchHistory',
 } as const;
 
-/** 启动时从磁盘水合 */
+/** 启动时从磁盘水合；window focus 也会重水合（播放器窗口写入的主窗口同步） */
 export async function hydrateStores(): Promise<void> {
   try {
+    // 各 store 与内存当前值一致时跳过 setState（任务 87）：
+    // 主窗口自身 focus 时磁盘值即自己刚写的，全量覆盖会触发订阅方的冗余回写
+    // （storage.set 回写 + 云端进度/收藏上报防抖重排），且可能覆盖内存中尚未落盘的新变更
     const favs = await api.storage.get<Record<string, DramaCard>>(KEY.favorites);
-    if (favs) favoritesStore.setState({ items: favs });
+    if (favs && JSON.stringify(favs) !== JSON.stringify(favoritesStore.getState().items)) {
+      favoritesStore.setState({ items: favs });
+    }
 
     const history = await api.storage.get<HistoryEntry[]>(KEY.history);
-    if (history) historyStore.setState({ entries: history });
+    if (history && JSON.stringify(history) !== JSON.stringify(historyStore.getState().entries)) {
+      historyStore.setState({ entries: history });
+    }
 
     const settings = await api.storage.get<Partial<Settings>>(KEY.settings);
-    if (settings) settingsStore.setState(settings);
+    if (settings && JSON.stringify(settings) !== JSON.stringify(pickSettings(settingsStore.getState()))) {
+      settingsStore.setState(settings);
+    }
 
     const searchHistory = await api.storage.get<string[]>(KEY.searchHistory);
-    if (searchHistory) searchHistoryStore.setState({ items: searchHistory });
+    if (searchHistory && JSON.stringify(searchHistory) !== JSON.stringify(searchHistoryStore.getState().items)) {
+      searchHistoryStore.setState({ items: searchHistory });
+    }
   } catch (err) {
     console.error('[hongguo] 恢复本地数据失败', err);
   }
+}
+
+/** 提取 settings 的持久化字段（与 wirePersistence 写盘字段一致，供水合对比） */
+function pickSettings(s: Settings): Pick<Settings, 'autoNext' | 'defaultSpeed' | 'rememberProgress' | 'theme' | 'autoUpdate'> {
+  const { autoNext, defaultSpeed, rememberProgress, theme, autoUpdate } = s;
+  return { autoNext, defaultSpeed, rememberProgress, theme, autoUpdate };
 }
 
 /** 订阅变更并持久化 */

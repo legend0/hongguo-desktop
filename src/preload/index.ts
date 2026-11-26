@@ -9,7 +9,7 @@ const api = {
   getHome: () => ipcRenderer.invoke('net:home'),
   /** 搜索（结果第一页，官网 Web → App 端双源降级） */
   search: (keyword: string) => ipcRenderer.invoke('net:search', keyword),
-  /** 搜索联想词（demo 协议无此接口，主进程恒返回空数组） */
+  /** 搜索联想词（官网 Web 源，主进程缓存 60s + LRU 上限） */
   searchSuggest: (keyword: string) => ipcRenderer.invoke('net:search-suggest', keyword),
   /** 搜索结果分页 */
   searchPage: (keyword: string, page: number) => ipcRenderer.invoke('net:search-page', keyword, page),

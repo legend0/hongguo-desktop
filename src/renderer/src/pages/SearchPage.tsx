@@ -47,6 +47,7 @@ export function SearchPage({ keyword = '' }: { keyword?: string }) {
       onRetry={reload}
       onRetryMore={retryMore}
       onLoadMore={loadMore}
+      contentKey={items.length}
       empty={
         items.length === 0 && !loading ? (
           <EmptyState

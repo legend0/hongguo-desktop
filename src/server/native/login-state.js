@@ -55,22 +55,28 @@ function normalizeToken(raw) {
     return token;
 }
 
+/** 登录态内存缓存（任务 87）：避免每个签名请求同步读盘；set/clear 时失效 */
+let cachedState = { value: null, loaded: false };
+
 /**
  * 读取当前登录态；文件缺失/损坏/字段非法时返回 null（按匿名态运行）。
+ * 结果进程内缓存，写入/清除时同步刷新（token 文件仅本进程写，无外部失效场景）。
  * @returns {{token: string, savedAt: number}|null} 登录态对象或 null
  */
 function getLoginState() {
+    if (cachedState.loaded) return cachedState.value;
+    cachedState.loaded = true;
     try {
         const saved = JSON.parse(fs.readFileSync(tokenFilePath(), 'utf8'));
         const token = typeof saved?.token === 'string' ? saved.token : '';
         const valid = token.length >= 20 && (TOKEN_PLAIN_RE.test(token) || (isCookieForm(token) && TOKEN_COOKIE_RE.test(token)));
         if (valid) {
-            return { token, savedAt: Number(saved?.savedAt) || 0 };
+            cachedState.value = { token, savedAt: Number(saved?.savedAt) || 0 };
         }
     } catch {
         /* 无文件或损坏 → 按匿名态 */
     }
-    return null;
+    return cachedState.value;
 }
 
 /** 当前是否存在有效格式的登录态 */
@@ -108,7 +114,9 @@ function setToken(raw) {
     const state = { token, savedAt: Date.now() };
     try {
         fs.mkdirSync(path.dirname(tokenFilePath()), { recursive: true });
-        fs.writeFileSync(tokenFilePath(), JSON.stringify(state, null, 2), 'utf8');
+        // 0o600（任务 87）：凭据文件仅本用户可读写（Windows 上映射只读位，POSIX 上生效）
+        fs.writeFileSync(tokenFilePath(), JSON.stringify(state, null, 2), { encoding: 'utf8', mode: 0o600 });
+        cachedState = { value: state, loaded: true };
         logger.info('LoginState', '登录态 token 已保存（匿名配额限制解除，请求将携带 x-tt-token）');
     } catch (error) {
         logger.warn('LoginState', `登录态保存失败: ${error.message}`);
@@ -125,6 +133,7 @@ function clearToken() {
     } catch (error) {
         logger.warn('LoginState', `登录态清除失败: ${error.message}`);
     }
+    cachedState = { value: null, loaded: true };
 }
 
 module.exports = { getLoginState, hasToken, tokenHeader, authHeaders, setToken, clearToken, TOKEN_HEADER_LENGTH };

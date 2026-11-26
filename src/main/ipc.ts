@@ -322,6 +322,31 @@ function renameWithRetry(from: string, to: string): void {
   }
 }
 
+/** 立即落盘待写缓存（任务 87）：应用退出时防抖定时器可能未触发，避免最后一次变更丢失 */
+function flushPendingStorage(): void {
+  if (!saveTimer || !cache) return;
+  clearTimeout(saveTimer);
+  saveTimer = null;
+  const file = DATA_FILE();
+  const tmp = `${file}.${randomUUID()}.tmp`;
+  try {
+    writeFileSync(tmp, JSON.stringify(cache), 'utf-8');
+    try {
+      copyFileSync(file, `${file}.bak`);
+    } catch {
+      /* 首次写入无旧文件，忽略 */
+    }
+    renameWithRetry(tmp, file);
+  } catch (err) {
+    console.error('[hongguo] 退出时本地数据写入失败', err);
+    try {
+      rmSync(tmp, { force: true });
+    } catch {
+      /* 忽略 */
+    }
+  }
+}
+
 function save(): void {
   if (saveTimer) clearTimeout(saveTimer);
   // 100ms 合并写，避免收藏/历史高频变更时反复落盘
@@ -495,7 +520,8 @@ export function registerIpc(): void {
   // ===== 登录态（x-tt-token）：匿名配额（约 9 集）的分水岭，见风控分析文档 L3 =====
   ipcMain.handle('net:auth-get', userFacing(async () => hg.loginState.getLoginState()));
   ipcMain.handle('net:auth-set', userFacing(async (_e, raw: string) => {
-    if (typeof raw !== 'string') throw new Error('无效的参数: token');
+    // token 长度受控（任务 87）：x-tt-token 实际数百字节，4096 已宽裕，防异常超大串落盘
+    assertStr(raw, 'token', 4096);
     return hg.loginState.setToken(raw);
   }));
   ipcMain.handle('net:auth-clear', userFacing(async () => {
@@ -504,13 +530,16 @@ export function registerIpc(): void {
   }));
   // 验证码自动登录：发码（回 mobile_ticket）+ 验证码换登录态（token 写入 login-state）
   ipcMain.handle('net:login-send-code', userFacing(async (_e, mobile: string) => {
-    if (typeof mobile !== 'string') throw new Error('无效的参数: mobile');
+    // 手机号：可选 + 前缀 + 4~20 位数字（任务 87）
+    assertStr(mobile, 'mobile', 20, /^\+?\d{4,20}$/);
     return hg.login.sendSmsCode(mobile);
   }));
   ipcMain.handle('net:login-submit', userFacing(async (_e, mobile: string, code: string, ticket?: string) => {
-    if (typeof mobile !== 'string') throw new Error('无效的参数: mobile');
-    if (typeof code !== 'string') throw new Error('无效的参数: code');
-    if (ticket !== undefined && typeof ticket !== 'string') throw new Error('无效的参数: ticket');
+    assertStr(mobile, 'mobile', 20, /^\+?\d{4,20}$/);
+    // 验证码：4~16 位数字或字母组合（任务 87）
+    assertStr(code, 'code', 16, /^[A-Za-z0-9]{4,16}$/);
+    // mobile_ticket：上游回传的长串，4096 上限（任务 87）
+    assertOptional(ticket, 'ticket', 4096);
     return hg.login.loginWithCode(mobile, code, ticket ?? '');
   }));
   // ===== 账号（官网扫码登录 + 账号域云同步）：凭据在 account_session 持久化，
@@ -742,7 +771,8 @@ export function registerIpc(): void {
       width = Math.round(Math.min(1280, Math.max(minW, height * ratio)));
     } else {
       width = minW;
-      const workH = screen.getPrimaryDisplay().workAreaSize.height;
+      // 以窗口实际所在显示器的工作区为基准（任务 87：副屏分辨率/缩放可能与主屏不同）
+      const workH = screen.getDisplayMatching(win.getBounds()).workAreaSize.height;
       height = Math.round(Math.min(workH - 40, Math.max(400, width / ratio)));
     }
     win.setMinimumSize(Math.min(minW, width), 400);
@@ -769,12 +799,16 @@ export function registerIpc(): void {
    */
   ipcMain.handle('app:openExternal', (_e, url: string) => {
     if (typeof url !== 'string' || !url.startsWith('https://')) return false;
-    void shell.openExternal(url);
+    // openExternal 可能因系统默认浏览器异常 reject（任务 87），捕获记日志避免 unhandled rejection
+    shell.openExternal(url).catch((err: unknown) => {
+      hg.logger.warn('Ipc', `外部链接打开失败: ${String((err as Error)?.message ?? err)} url=${url}`);
+    });
     return true;
   });
 
-  // 退出前关闭流端点
+  // 退出前关闭流端点 + 强制落盘待写存储（任务 87：防抖写盘可能未触发）
   app.on('will-quit', () => {
     streamClose?.();
+    flushPendingStorage();
   });
 }

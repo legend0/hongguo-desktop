@@ -9,6 +9,17 @@ export interface PagedResult<T, M = unknown> {
 }
 
 /**
+ * 会话游标失效错误识别（dramaService 会话失效分支，任务 87 收敛到单一辅助函数）。
+ * 受 Electron IPC 仅透传错误 message 限制（自定义 code 属性跨进程丢失），
+ * 暂以服务端稳定文案判断；若文案变更需同步调整 dramaService 抛错处。
+ * @param error - 加载失败的错误信息（已剥离 IPC 前缀）
+ * @returns {boolean} 是否为会话游标失效（需整页刷新重建游标链）
+ */
+function isSessionExpiredError(error: string | null): boolean {
+  return !!error && error.includes('列表已过期');
+}
+
+/**
  * 无限滚动分页 hook：
  * - resetKey 变化时重置并加载第 1 页
  * - loadMore() 追加下一页（按 id 去重、过期响应丢弃）
@@ -88,13 +99,14 @@ export function usePagedList<T extends { id: string }, M = unknown>(
 
   /**
    * 手动重试（列表底部重试按钮）：不受失败冷却限制。
-   * - 会话游标失效（服务端 APP_CURSOR：错误信息含「列表已过期」）→ 整页刷新：
+   * - 会话游标失效（服务端 SESSION_EXPIRED，见 dramaService 会话失效分支）→ 整页刷新：
    *   重试同页永远无游标，回到第 1 页重建会话游标链；
    * - 其他失败（网络/5xx）→ 追加页已回滚，重试请求的正是上次失败的同一页。
    */
   const retryMore = useCallback(() => {
     if (loading || loadingMore || !hasMore) return;
-    if (typeof error === 'string' && error.includes('列表已过期')) {
+    // 按错误 code 判断（任务 87）：不依赖中文文案耦合；API 层剥离前缀后 code 保留在错误对象
+    if (isSessionExpiredError(error)) {
       setPage(1);
       setHasMore(true);
       void load(1, true);

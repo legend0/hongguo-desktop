@@ -236,6 +236,16 @@ export function createMainWindow(): void {
 
 // ===== 关闭行为 IPC（窗口管理状态在本模块，故随托盘一起注册） =====
 
+/** 校验 IPC 调用来源是本应用自己的窗口（主窗口/播放器窗口），拒绝 devtools 等未知 webContents（任务 87） */
+function isAppSender(sender: Electron.WebContents): boolean {
+  const main = mainWindow;
+  const player = getPlayerWindow();
+  return (
+    (!!main && !main.isDestroyed() && main.webContents === sender) ||
+    (!!player && !player.isDestroyed() && player.webContents === sender)
+  );
+}
+
 export function registerWindowIpc(): void {
   ipcMain.handle('win:minimize', (e) => BrowserWindow.fromWebContents(e.sender)?.minimize());
   ipcMain.handle('win:toggleMaximize', (e) => {
@@ -248,15 +258,29 @@ export function registerWindowIpc(): void {
   ipcMain.handle('win:close', (e) => BrowserWindow.fromWebContents(e.sender)?.close());
   ipcMain.handle('win:isMaximized', (e) => BrowserWindow.fromWebContents(e.sender)?.isMaximized() ?? false);
   /** 最小化到托盘 */
-  ipcMain.handle('win:hideToTray', () => hideMainWindowToTray());
+  ipcMain.handle('win:hideToTray', (e) => {
+    if (!isAppSender(e.sender)) return false;
+    hideMainWindowToTray();
+    return true;
+  });
   /** 真正退出应用 */
-  ipcMain.handle('win:quitApp', () => quitApp());
+  ipcMain.handle('win:quitApp', (e) => {
+    if (!isAppSender(e.sender)) return false;
+    quitApp();
+    return true;
+  });
   /** 渲染层同步"记住的关闭选择"，主进程用于 Alt+F4 等系统级关闭 */
-  ipcMain.handle('win:setCloseAction', (_e, action: CloseAction) => {
+  ipcMain.handle('win:setCloseAction', (e, action: CloseAction) => {
+    if (!isAppSender(e.sender)) return false;
     appState.closeAction = action === 'quit' || action === 'tray' ? action : 'ask';
+    return true;
   });
   /** 渲染层已响应关闭确认弹窗（选择/取消均可），清除 3s 兜底定时器 */
-  ipcMain.handle('win:closeResponded', () => clearCloseFallback());
+  ipcMain.handle('win:closeResponded', (e) => {
+    if (!isAppSender(e.sender)) return false;
+    clearCloseFallback();
+    return true;
+  });
   /** 切换窗口置顶（播放器「钉住」按钮）：floating 层级，不抢焦点。@returns 切换后的置顶状态 */
   ipcMain.handle('win:toggleAlwaysOnTop', (e) => {
     const win = BrowserWindow.fromWebContents(e.sender);

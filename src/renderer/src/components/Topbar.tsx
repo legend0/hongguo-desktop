@@ -60,8 +60,8 @@ export function Topbar() {
   const showHistory = open && kwTrim.length === 0;
 
   useEffect(() => {
-    void window.hongguo.win.isMaximized().then(setMaximized);
-    return window.hongguo.win.onMaximizedChanged(setMaximized);
+    void api.win.isMaximized().then(setMaximized);
+    return api.win.onMaximizedChanged(setMaximized);
   }, []);
 
   // 进入搜索结果页时把关键词回填到搜索框，顶部与页面内容保持一致
@@ -333,7 +333,7 @@ export function Topbar() {
           className="tb-icon"
           title="最小化"
           aria-label="最小化"
-          onClick={() => void window.hongguo.win.minimize()}
+          onClick={() => void api.win.minimize()}
         >
           <IconMinimize size={14} />
         </button>
@@ -341,7 +341,7 @@ export function Topbar() {
           className="tb-icon"
           title={maximized ? '还原' : '最大化'}
           aria-label={maximized ? '还原' : '最大化'}
-          onClick={() => void window.hongguo.win.toggleMaximize()}
+          onClick={() => void api.win.toggleMaximize()}
         >
           {maximized ? <IconRestore size={13} /> : <IconMaximize size={13} />}
         </button>

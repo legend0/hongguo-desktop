@@ -89,6 +89,7 @@ function markDeviceGood() {
         const saved = JSON.parse(fs.readFileSync(file, 'utf8'));
         saved.last_play_ok = Date.now();
         fs.writeFileSync(file, JSON.stringify(saved, null, 2), 'utf8');
+        persistedCache = { value: undefined, loaded: false }; // 健康度已变，失效缓存（任务 87）
         lastMarkGoodAt = Date.now();
     } catch (error) {
         logger.warn('PlaybackDevice', `设备健康度时间戳写入失败: ${error.message}`);
@@ -137,11 +138,18 @@ function identityFilePath() {
     return path.join(dataDir, 'dev-identity.json');
 }
 
+/** 持久化设备内存缓存（任务 87）：currentProfile/currentProvenGood 等同步接口
+ *  位于取址/弹幕热路径，避免每次调用都同步读盘；写盘/清除时同步刷新。
+ *  设备文件仅本进程写，无外部失效场景。 */
+let persistedCache = { value: undefined, loaded: false };
+
 /** 从本地文件加载持久化播放设备；无效/缺失返回 null。
  *  last_play_ok 在 24h 内 → provenGood=true（跨进程设备健康度护栏：重启后
  *  复用该设备时空响应不再换设备烧注册配额，见 app-source 取址阶梯）。
  *  cookie_jar/session（设备会话，demo 重构新增）随身份一并恢复；旧格式文件自动兼容。 */
 function loadPersistedDevice() {
+    if (persistedCache.loaded) return persistedCache.value;
+    persistedCache.loaded = true;
     try {
         const saved = JSON.parse(fs.readFileSync(identityFilePath(), 'utf8'));
         const device_id = responseId(saved, 'device_id');
@@ -149,7 +157,7 @@ function loadPersistedDevice() {
         const cdid = typeof saved?.cdid === 'string' && /^[0-9a-f-]{36}$/i.test(saved.cdid) ? saved.cdid : '';
         if (device_id && iid && cdid) {
             const provenGood = Number(saved?.last_play_ok) > Date.now() - PROVEN_GOOD_TTL_MS;
-            return Object.freeze({
+            persistedCache.value = Object.freeze({
                 device_id, iid, cdid,
                 cookie: sanitizeCookie(saved.cookie, iid),
                 profile: normalizeProfile(saved.profile) || DEFAULT_PROFILE, provenGood,
@@ -161,7 +169,7 @@ function loadPersistedDevice() {
     } catch {
         /* 无文件或损坏 → 视为未持久化 */
     }
-    return null;
+    return persistedCache.value;
 }
 
 /** 设备池容量上限（参考 zfdang #108）：保留最近轮换下来的历史设备（含完整会话） */
@@ -231,6 +239,7 @@ function persistDevice(device, strict = false, pool = []) {
         const tmpPath = `${identityFilePath()}.tmp.${Date.now()}`;
         fs.writeFileSync(tmpPath, payload, { encoding: 'utf8', mode: 0o600 });
         fs.renameSync(tmpPath, identityFilePath());
+        persistedCache = { value: undefined, loaded: false }; // 失效缓存，下次读取重建
         logger.info('PlaybackDevice', `播放设备凭据已持久化: ${identityFilePath()}`);
     } catch (error) {
         logger.warn('PlaybackDevice', `播放设备凭据持久化失败: ${error.message}`);
@@ -241,6 +250,7 @@ function persistDevice(device, strict = false, pool = []) {
 /** 删除持久化凭据文件（设备重置时调用） */
 function clearPersistedDevice() {
     try { fs.rmSync(identityFilePath(), { force: true }); } catch { /* 忽略 */ }
+    persistedCache = { value: undefined, loaded: true }; // 已清除，缓存空值（任务 87）
 }
 
 function responseId(response, name) {

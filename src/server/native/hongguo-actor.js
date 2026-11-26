@@ -588,6 +588,8 @@ async function fetchActorWorks(actorId, { count = 20, offset = 0, request = defa
     hasMore,
     expiresAt: now + WORKS_CACHE_TTL_MS
   });
+  // LRU 上限（任务 87）：演员 id 空间无界，超出淘汰最旧的缓存条目
+  while (worksCache.size > 20) worksCache.delete(worksCache.keys().next().value);
 
   return parseWorksPayload(payload, cleanId, { reqOffset, reqCount });
 }

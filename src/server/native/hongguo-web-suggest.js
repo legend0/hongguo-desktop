@@ -68,6 +68,8 @@ async function searchSuggest(keyword) {
   }
 
   cache.set(kw, { at: Date.now(), items });
+  // LRU 上限（任务 87）：关键词空间无界，超出淘汰最旧的缓存条目
+  while (cache.size > 50) cache.delete(cache.keys().next().value);
   logger.info('HongguoWebSuggest', `搜索联想完成 keyword="${kw}": ${items.length} 条`);
   return items;
 }

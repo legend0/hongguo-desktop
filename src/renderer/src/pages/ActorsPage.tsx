@@ -63,6 +63,7 @@ export function ActorsPage() {
       onRetry={reload}
       onRetryMore={retryMore}
       onLoadMore={loadMore}
+      contentKey={items.length}
       empty={!loading && !error && items.length === 0 ? <div className="center-tip">暂无上榜演员</div> : undefined}
     >
       <div className="grid actors-grid">

@@ -17,6 +17,9 @@ interface ListShellProps {
   /** 手动重试追加页（底部重试按钮；不受失败冷却限制） */
   onRetryMore: () => void;
   onLoadMore: () => void;
+  /** 内容版本号（列表条数，任务 87）：替代 children 依赖驱动"不足一屏自动续载"复查，
+   *  children 每次渲染都是新 JSX 引用，作为依赖会让该 effect 在每次渲染都执行强制 reflow */
+  contentKey?: number;
   /** 空态 */
   empty?: ReactNode;
   /** 列表内容（滚动区） */
@@ -39,6 +42,7 @@ export function ListShell({
   onRetry,
   onRetryMore,
   onLoadMore,
+  contentKey,
   empty,
   children,
 }: ListShellProps) {
@@ -89,6 +93,7 @@ export function ListShell({
 
   // 内容不足一屏（无滚动空间）时自动续载下一页，直到产生滚动条或没有更多。
   // 兜底分页条数少于屏幕可容纳行数的场景（如高分屏全屏 + 每页 15/20 条）。
+  // 内容变化经 contentKey（条数）驱动复查，避免 children 引用不稳定造成每次渲染 reflow（任务 87）
   useEffect(() => {
     if (loading) {
       lastAutoHeightRef.current = 0; // 重载（切筛选/重试）时清零，允许重新自动续载
@@ -100,7 +105,7 @@ export function ListShell({
     if (lastAutoHeightRef.current === el.scrollHeight) return;
     lastAutoHeightRef.current = el.scrollHeight;
     onLoadMore();
-  }, [loading, loadingMore, hasMore, error, onLoadMore, children]);
+  }, [loading, loadingMore, hasMore, error, onLoadMore, contentKey]);
 
   // 加载结束后释放锁
   if (!loadingMore && lockRef.current) lockRef.current = false;
