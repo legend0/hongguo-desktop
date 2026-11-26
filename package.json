@@ -1,6 +1,6 @@
 {
   "name": "@hongguo/desktop",
-  "version": "1.4.8",
+  "version": "1.4.9",
   "private": true,
   "description": "红果短剧第三方桌面客户端（Electron）：协议直连 + 双源降级 + 本地智能推荐 + 独立沉浸式播放器",
   "license": "AGPL-3.0",
