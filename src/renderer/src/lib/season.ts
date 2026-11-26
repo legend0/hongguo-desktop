@@ -104,14 +104,17 @@ export function normalizeBaseTitle(title: string | undefined | null): string {
  */
 const CACHE_TTL_MS = 30 * 60 * 1000;
 const seasonsCache = new Map<string, { list: DramaCard[]; at: number }>();
-/** 成员索引：剧 id → 所属系列缓存键。同系列靠标题搜索聚合，副标题差异会让
- * "被包含匹配进来的剧"自身 baseTitle 与系列键不同（缓存未命中 → 重新搜索 → 波动时
- * 只搜到自己 → 分季模块消失）；经分季卡片跳转的剧直接按 id 反查所属系列缓存。 */
+/** 成员索引：剧 id → 所属系列缓存键。同系列靠标题搜索聚合，个别结果剥离季标后
+ * 基础名仍与系列键不同（归一化差异/解析兜底），缓存未命中会重新搜索 → 波动时
+ * 只搜到自己 → 分季模块消失；经分季卡片跳转的剧直接按 id 反查所属系列缓存。 */
 const memberIndex = new Map<string, string>();
 
 /**
  * 拉取同系列各季卡片（含当前季，按季数升序；探索来源 = 基础剧名搜索前两页）。
- * 过滤规则：归一化基础名相同，或当前基础名 ≥4 字且为结果标题的包含项（容错副标题差异）；
+ * 过滤规则（任务 88，用户选定）：结果剧名剥离季标后归一化，与当前剧基础名**严格相等**才收录——
+ * 原包含匹配（includes）会混入「剧名之XXX」式连写蹭名的其它影片，全等比对排除大部分增片；
+ * 代价：《剧名：副标题》式跨平台副标题差异不再聚合（保守少显示优于错误聚合）。
+ * 残留：与当前剧完全同名的另一部影片无法靠标题区分，维持收录。
  * 漫画条目排除。排序：季数升序 → 同季显式季标在前 → 集数多在前。
  * @param current 当前剧卡片（结果集锚点，保证当前季一定在列）
  * @returns 同系列各季（含当前季）；搜索失败时仅返回 [当前季]
@@ -153,7 +156,8 @@ export async function fetchRelatedSeasons(current: DramaCard): Promise<DramaCard
     if (!item?.id || seenIds.has(item.id) || item.kind === 'comic') continue;
     const parsed = parseSeasonInfo(item.title);
     const itemNormBase = normalizeBaseTitle(parsed.baseTitle);
-    if (itemNormBase === normBase || (normBase.length >= 4 && itemNormBase.includes(normBase))) {
+    // 严格相等（任务 88）：包含匹配会混入「剧名之XXX」式连写蹭名的其它影片
+    if (itemNormBase === normBase) {
       seenIds.add(item.id);
       result.push({
         id: item.id,
