@@ -36,6 +36,13 @@ const SHORTPLAY_API = SHORTPLAY_APIS[0];
 // video_tab 兜底端点（参考 hongguoTV 478f006：PlayRetryPlan.hosts 首选域名，单次请求）
 const VIDEO_TAB_API = 'https://api5-normal-sinfonlineb.fqnovel.com/reading/bookapi/video_tab/multi_video_model/v1/';
 
+// 全集目录端点阶梯（参考 hongguoTV tabGate.hosts，2026-11-27 官网 vid_list 混淆后的全集来源）：
+// 官网 player 页 vid_list 只下发 v1_ 不透明标识后，改走站方 App 目录接口拿全量纯数字 item_id
+const DIRECTORY_APIS = [
+    'https://api5-normal-sinfonlineb.fqnovel.com/reading/bookapi/directory/all_items/v/',
+    'https://api5-normal-hl.fqnovel.com/reading/bookapi/directory/all_items/v/',
+];
+
 /**
  * 构造 v5 移动端签名的播放域请求（v04.10.03 机制，PR#106）。
  * v3 medusa 被当前播放端点以空 200 拒绝；v5 将注册设备三要素同时绑定进
@@ -151,4 +158,39 @@ function shortplayRequest(vid, identity, apiBase = SHORTPLAY_API) {
     return { url, body, headers };
 }
 
-module.exports = { playbackRequestV5, videoTabRequest, shortplayRequest, V5_PLAYBACK_QUERY, V5_PLAYBACK_UA, V5_VIDEO_TAB_UA, SHORTPLAY_APIS, SHORTPLAY_API, VIDEO_TAB_API };
+/**
+ * 构造全集目录 GET 同身份请求（参考 hongguoTV ContentRepository.directoryItemsV5 形态）：
+ * 官网 player 页 vid_list 混淆（v1_ 不透明标识）后，对站方 App 目录接口
+ * `/reading/bookapi/directory/all_items/v/` 拉全量纯数字 item_id。
+ * 与 video_tab 同为 /reading/bookapi/ 域 GET + 空 body v5 签名（不重新注册设备），
+ * 业务参数 book_id/need_version 按 snake_case 编入 query；UA 复用 video_tab gate 口径。
+ * @param {string} bookId - 剧集编号（book_id，即 series_id）
+ * @param {{device_id?: string, iid?: string, cdid?: string, cookie?: string}} identity - 注册设备身份（仅取三要素与 Cookie，会话/诊断字段不得进 query）
+ * @param {string} [apiBase] - 目录端点（默认阶梯首选域名）
+ * @returns {{url: string, headers: Object<string,string>}} 签名后请求（GET，无 body）
+ * @throws {Error} v5 签名分支试探未命中时抛出
+ */
+function directoryItemsRequest(bookId, identity, apiBase = DIRECTORY_APIS[0]) {
+    const { device_id = '', iid = '', cdid = '' } = identity || {};
+    const values = {
+        ...V5_PLAYBACK_QUERY,
+        iid: iid || '', cdid: cdid || '', device_id: device_id || '',
+        book_id: String(bookId),
+        need_version: 'true',
+    };
+    const { url, headers: signedHeaders } = signPlaybackV5(apiBase, values, null);
+    const headers = {
+        'User-Agent': V5_VIDEO_TAB_UA, Accept: 'application/json; charset=utf-8',
+        'Accept-Language': 'zh-CN,zh;q=0.9',
+        ...signedHeaders,
+    };
+    // 设备 Cookie 与登录态合并口径与 playbackRequestV5/videoTabRequest 一致（同身份同会话）
+    const cookieHeader = identity?.cookie || (iid ? `store-region=cn-bj; store-region-src=did; install_id=${iid}` : '');
+    const authHeaders = loginState.authHeaders();
+    if (cookieHeader || authHeaders.Cookie) {
+        headers.Cookie = [cookieHeader, authHeaders.Cookie].filter(Boolean).join('; ');
+    }
+    return { url, headers };
+}
+
+module.exports = { playbackRequestV5, videoTabRequest, directoryItemsRequest, shortplayRequest, V5_PLAYBACK_QUERY, V5_PLAYBACK_UA, V5_VIDEO_TAB_UA, SHORTPLAY_APIS, SHORTPLAY_API, VIDEO_TAB_API, DIRECTORY_APIS };

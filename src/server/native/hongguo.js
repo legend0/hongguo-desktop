@@ -8,6 +8,7 @@ const { isPublicMediaUrl, webMediaRequestOptions } = require('./web-media-guard'
 const logger = require('../services/logger');
 const appSource = require('./app-source');
 const { getPlaybackDevice, DEFAULT_VERIFIED_DEVICE } = require('./playback-device');
+const { directoryItemsRequest, DIRECTORY_APIS } = require('../play/requests');
 
 const API = "https://api5-normal-sinfonlineb.fqnovel.com";
 const UA = "com.phoenix.read/71532 (Linux; U; Android 9; SM-N9860; Build/PQ3A.190705.10241111;tt-ok/3.12.13.20)";
@@ -24,18 +25,6 @@ const WEB_REFERER = SITE_ORIGIN + "/";
  *  旧静态 71532 无签名身份（env 设备号 + 固定 UA）已被网关静默拒绝
  *  （HTTP 200 + 0 字节，2026-11-11 实测），COMMON_QUERY/HEADERS 静态定义随之移除。 */
 
-const DETAIL_BIZ_PARAM = {
-  detail_page_version: 0,
-  disable_digg_stat: false,
-  image_shrink_datas_str: "W3siaW1hZ2VfdHlwZSI6MywiaW1hZ2Vfd2lkdGgiOjkwMCwic2hyaW5rX3R5cGUiOjN9LHsiaW1hZ2VfdHlwZSI6NCwiaW1hZ2Vfd2lkdGgiOjcyLCJzaHJpbmtfdHlwZSI6NH1d\n",
-  need_all_video_definition: false,
-  need_mp4_align: false,
-  screen_width_px: "900",
-  source: 7,
-  use_os_player: false,
-  use_server_dns: false,
-};
-
 const MODEL_BIZ_PARAM = {
   detail_page_version: 0,
   device_level: 3,
@@ -49,7 +38,7 @@ const MODEL_BIZ_PARAM = {
 
 /**
  * App 详情/分集接口调用封装（真 Argus/Ladon 签名，每次尝试重新签名）。
- * @param {string} apiPath - 接口路径（如 /novel/player/multi_video_detail/preload/v1）
+ * @param {string} apiPath - 接口路径（如 /novel/player/multi_video_model/preload/v1）
  * @param {Object} body - 业务 JSON 请求体
  * @param {number} [retries=3] - 最大尝试次数
  * @param {number} [timeout=25000] - 单次请求超时（毫秒）
@@ -274,6 +263,53 @@ function parseEpisodeListHtml(html, seriesId) {
 }
 
 /**
+ * 从官网 detail 页内嵌 JSON 提取剧集元数据（不读 vid_list）。
+ * 目录接口回退路径使用：2026-11-27 官网 player 页 vid_list 已混淆为 v1_ 不透明标识，
+ * 但详情页的剧名/封面/简介等元数据仍可靠，配合目录接口的纯数字 item_id 组装分集。
+ * @param {string} html - 官网 detail 页 HTML
+ * @param {string} seriesId - 剧集编号（身份校验，防止把推荐位元数据当成当前剧）
+ * @returns {{series_title: string, cover: string, intro: string, tags: string[], celebrities: Array, social_info: Object|null}} 剧集元数据
+ * @throws {Error} 身份校验失败（响应不含当前剧或明确报错）时抛出
+ */
+function parseSeriesMetaHtml(html, seriesId) {
+  const router = require('./catalog').readRouterData(html);
+  const data = router.loaderData?.detail_page
+    ?? router.loaderData?.['player_(series_id)/page']
+    ?? router.loaderData?.['player_(series_id)/(vid)/page'];
+  const detail = data?.seriesDetail;
+  if (!data || data.isSuccess === false || !/^\d{1,30}$/.test(String(detail?.series_id || '')) ||
+      String(detail.series_id) !== String(seriesId) ||
+      (data.series_id != null && String(data.series_id) !== String(seriesId))) {
+    throw new Error('官网返回的剧集与请求不一致或缺少剧集身份');
+  }
+  const intro = typeof detail.series_intro === 'string' ? detail.series_intro.trim() : '';
+  const tags = Array.isArray(detail.tags) ? detail.tags.map(t => String(t).trim()).filter(Boolean) : [];
+  const celebrities = Array.isArray(detail.celebrities) ? detail.celebrities
+    .filter(c => c && !c.is_label && (c.nickname || c.name))
+    .map(c => ({
+      actor_id: String(c.celebrity_id || c.actor_id || ''),
+      name: String(c.nickname || c.name || '').trim(),
+      avatar: typeof c.avatar === 'string' ? c.avatar : '',
+      role: String(c.sub_title || c.role || '').trim()
+    })) : [];
+  const socialInfo = data?.seriesSocialInfo ? {
+    rating: Number(data.seriesSocialInfo.rating) || null,
+    rating_count: data.seriesSocialInfo.rating_count ? String(data.seriesSocialInfo.rating_count) : '',
+    hot_text: data.seriesSocialInfo.hot_score_data?.text || '',
+    like_count: data.seriesSocialInfo.series_like_count ? String(data.seriesSocialInfo.series_like_count) : '',
+    favorite_count: data.seriesSocialInfo.series_favorite_count ? String(data.seriesSocialInfo.series_favorite_count) : ''
+  } : null;
+  return {
+    series_title: typeof detail.series_name === 'string' ? detail.series_name : '',
+    cover: typeof detail.series_cover === 'string' ? detail.series_cover : '',
+    intro,
+    tags,
+    celebrities,
+    social_info: socialInfo,
+  };
+}
+
+/**
  * 从官网取单集可直接下载的 MP4 直链
  * 官网页里与当前分集绑定的 VideoObject.contentUrl 是明文 MP4，无 CENC 加密，
  * 因此不需要 spade_a / 解密这一步。
@@ -488,60 +524,115 @@ async function fetchEpisodeListFromWeb(seriesId, deadline = 0) {
   }
 }
 
+/**
+ * 从站方 App 目录接口取全集纯数字分集 id（官网 vid_list 混淆后的全集来源）。
+ * 参考 hongguoTV（miaoxiaohu）2026-11-27 方案：`/reading/bookapi/directory/all_items/v/`
+ * GET + v5 移动端签名（复用已注册播放设备身份，不重新注册），hosts 阶梯逐个尝试。
+ * 响应 data.item_data_list[].item_id 必须全为纯数字且非空，任何一条不满足整体作废
+ * （fail closed，绝不把推荐位/异常数据当分集）。
+ * @param {string} seriesId - 剧集编号（即 book_id）
+ * @param {number} [deadline=0] - 总截止时间戳（毫秒，0 表示不限）
+ * @returns {Promise<string[]>} 全集纯数字 vid 列表（保序去重）
+ * @throws {Error} 阶梯耗尽仍无有效目录时抛出（含各端点失败原因）
+ */
+async function fetchEpisodeVidsFromDirectory(seriesId, deadline = 0) {
+  const errors = [];
+  for (const apiBase of DIRECTORY_APIS) {
+    const remaining = deadline ? deadline - Date.now() : 0;
+    if (deadline && remaining <= 0) break;
+    try {
+      const device = await getPlaybackDevice(appSource.requestJson);
+      const req = directoryItemsRequest(String(seriesId), device, apiBase);
+      const res = await axios.get(req.url, {
+        headers: req.headers,
+        timeout: deadline ? Math.min(8000, remaining) : 8000,
+        responseType: 'arraybuffer',
+        transformResponse: [(d) => d],
+      });
+      const buf = Buffer.from(res.data || []);
+      if (res.status !== 200) throw new Error(`HTTP ${res.status}`);
+      if (!buf.length) throw new Error('空响应（HTTP 200，0 字节）');
+      let j;
+      try { j = JSON.parse(buf.toString('utf8')); }
+      catch { throw new Error(`响应不是合法 JSON（${buf.length} 字节）`); }
+      const code = j?.code ?? j?.Code;
+      if (code !== 0 && code !== undefined) throw new Error(`业务失败 code=${code}`);
+      const list = j?.data?.item_data_list;
+      if (!Array.isArray(list) || !list.length) throw new Error('目录列表为空');
+      const ids = [];
+      for (const item of list) {
+        const itemId = String(item?.item_id ?? '').trim();
+        if (!/^\d{1,30}$/.test(itemId)) throw new Error(`目录含非纯数字 item_id（${itemId.slice(0, 12)}…）`);
+        ids.push(itemId);
+      }
+      logger.info('HongguoNative', `目录接口获取全集成功: seriesId=${seriesId}, 共 ${ids.length} 集, endpoint=${apiBase}`);
+      return [...new Set(ids)];
+    } catch (error) {
+      errors.push(`${apiBase.split('/')[2]}：${error.message}`);
+      logger.warn('HongguoNative', `目录接口失败: seriesId=${seriesId}, endpoint=${apiBase}, 原因: ${error.message}`);
+    }
+  }
+  throw new Error(`目录接口无有效响应（${errors.join('；')}）`);
+}
+
+/**
+ * 目录接口 + 官网详情页元数据的分集组装（fetchEpisodeListFresh 的回退路径）。
+ * 分集 vid 走 App 目录接口；剧名/封面/简介等元数据尽力从官网 detail 页提取
+ * （官网 player 页 vid_list 混淆但详情页元数据仍可靠），拿不到则留空由上层兜底。
+ * @param {string} seriesId - 剧集编号
+ * @param {number} [deadline=0] - 总截止时间戳（毫秒，0 表示不限）
+ * @returns {Promise<Object>} 与官网路径同构的分集数据（source='directory'）
+ * @throws {Error} 目录接口无有效响应时抛出
+ */
+async function fetchEpisodeListFromDirectory(seriesId, deadline = 0) {
+  const vids = await fetchEpisodeVidsFromDirectory(seriesId, deadline);
+  // 官网详情页元数据：身份校验通过才采用（parseSeriesMetaHtml 校验 series_id 一致）
+  let meta = null;
+  try {
+    const html = await fetchSiteHtml(`${SITE_ORIGIN}/detail?series_id=${encodeURIComponent(String(seriesId))}`, 6000);
+    meta = parseSeriesMetaHtml(html, String(seriesId));
+  } catch (error) {
+    logger.warn('HongguoNative', `目录回退路径的官网元数据获取失败: seriesId=${seriesId}, 原因: ${error.message}`);
+  }
+  const episodes = vids.map((vid, i) => ({
+    vid,
+    vid_index: i + 1,
+    title: '',
+    series_id: String(seriesId),
+    series_title: meta?.series_title || '未命名短剧',
+    cover: meta?.cover || '',
+  }));
+  return {
+    series_id: String(seriesId),
+    series_title: meta?.series_title || '未命名短剧',
+    cover: meta?.cover || '',
+    total: episodes.length,
+    web_accessible_episodes: null,
+    episodes,
+    intro: meta?.intro || '',
+    tags: meta?.tags || [],
+    episode_label: '',
+    social_info: meta?.social_info || null,
+    celebrities: meta?.celebrities || [],
+    source: 'directory', // 标记来源，便于排查
+  };
+}
+
 async function fetchEpisodeListFresh(seriesId, { deadline = 0 } = {}) {
   let webError;
   try {
     return await fetchEpisodeListFromWeb(seriesId, deadline);
   } catch (error) {
     webError = error;
-    logger.warn('HongguoNative', `官网网页分集获取未命中，回退至App备用接口: seriesId=${seriesId}, 原因: ${error.message}`);
+    logger.warn('HongguoNative', `官网网页分集获取未命中，回退至App目录接口: seriesId=${seriesId}, 原因: ${error.message}`);
   }
-  const body = {
-    biz_param: DETAIL_BIZ_PARAM,
-    dr_scene: "preload",
-    series_id: seriesId,
-  };
-  let j;
   try {
-    j = await apiCall("/novel/player/multi_video_detail/preload/v1", body, 3, 25000, deadline);
-  } catch (e) {
-    throw new Error(`获取分集失败：官网数据源（${webError.message}），备用接口（${e.message}）`);
+    return await fetchEpisodeListFromDirectory(seriesId, deadline);
+  } catch (error) {
+    // 旧 preload 备用通道（/novel/player/multi_video_detail/preload/v1 + v3 Argus 签名）
+    // 2026-11-27 起被网关要求 v5 签名而失效（响应不含请求剧集），整体移除。
+    throw new Error(`获取分集失败：官网数据源（${webError.message}），App目录接口（${error.message}）`);
   }
-  if (!j || j.code !== 0) {
-    throw new Error("detail API 失败: " + JSON.stringify(j || {}).slice(0, 200));
-  }
-  const d = j.data || {};
-  const requested = String(seriesId);
-  // Never take the first key from an object: a mismatched response must fail closed.
-  const sid = Object.prototype.hasOwnProperty.call(d, requested) ? requested : '';
-  if (!sid) {
-    throw new Error("备用接口返回的剧集与请求不一致");
-  }
-  const vd = d[sid]?.video_data || {};
-  if (vd.series_id && String(vd.series_id) !== sid) {
-    throw new Error("备用接口返回的剧集与请求不一致");
-  }
-  const vl = vd.video_list || [];
-  if (vl.some(item => item?.series_id && String(item.series_id) !== sid)) {
-    throw new Error("备用接口返回了其他剧集的分集");
-  }
-  const eps = vl.map((item) => ({
-    vid: String(item.vid),
-    vid_index: item.vid_index || 0,
-    title: item.title || '',
-    series_id: String(item.series_id || sid),
-    series_title: vd.series_title || '',
-    cover: vd.series_cover || vd.cover_url || item.cover_url || '',
-  }));
-  if (!eps.length) throw new Error('备用接口分集列表为空');
-  eps.sort((a, b) => a.vid_index - b.vid_index);
-  return {
-    series_id: String(sid),
-    series_title: vd.series_title || '未命名短剧',
-    cover: vd.series_cover || vd.cover_url || (eps[0] && eps[0].cover) || '',
-    total: eps.length,
-    episodes: eps,
-  };
 }
 
 /**
@@ -1208,6 +1299,7 @@ module.exports = {
   resolveSeriesId,
   fetchEpisodeList,
   fetchEpisodeListFromWeb,
+  fetchEpisodeListFromDirectory,
   fetchPlayUrlSingle,
   fetchPlayUrlFromWeb,
   deriveKey,
